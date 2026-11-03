@@ -74,31 +74,60 @@ def _winreg():
     return winreg
 
 
-def existing_install():
-    """{'dir':..., 'version':..., 'inno_uninstall':...} or None."""
+def _registered_installs():
+    """Read each registration independently; never mix different copies."""
     wr = _winreg()
     if wr is None:
-        return None
-    found = {}
-    try:
-        with wr.OpenKey(wr.HKEY_CURRENT_USER, REG_KEY) as k:
-            found["dir"] = wr.QueryValueEx(k, "InstallLocation")[0]
-            found["version"] = wr.QueryValueEx(k, "DisplayVersion")[0]
-    except OSError:
-        pass
-    for hive in (wr.HKEY_CURRENT_USER, wr.HKEY_LOCAL_MACHINE):
-        for view in (0, getattr(wr, "KEY_WOW64_32KEY", 0), getattr(wr, "KEY_WOW64_64KEY", 0)):
-            try:
-                with wr.OpenKey(hive, OLD_INNO_KEY, 0, wr.KEY_READ | view) as k:
-                    found.setdefault("dir", wr.QueryValueEx(k, "InstallLocation")[0].rstrip("\\"))
-                    found.setdefault("version", wr.QueryValueEx(k, "DisplayVersion")[0])
-                    try:
-                        found["inno_uninstall"] = wr.QueryValueEx(k, "UninstallString")[0]
-                    except OSError:
-                        pass
-            except OSError:
-                continue
-    return found or None
+        return []
+    results = []
+    for key in (REG_KEY, OLD_INNO_KEY):
+        for hive in (wr.HKEY_CURRENT_USER, wr.HKEY_LOCAL_MACHINE):
+            for view in dict.fromkeys((0, getattr(wr, "KEY_WOW64_32KEY", 0), getattr(wr, "KEY_WOW64_64KEY", 0))):
+                try:
+                    with wr.OpenKey(hive, key, 0, wr.KEY_READ | view) as handle:
+                        location = wr.QueryValueEx(handle, "InstallLocation")[0]
+                        if not isinstance(location, str) or not location.strip():
+                            continue
+                        found = {"dir": os.path.abspath(location.rstrip("\\/")), "version": ""}
+                        try:
+                            found["version"] = wr.QueryValueEx(handle, "DisplayVersion")[0]
+                        except OSError:
+                            pass
+                        if key == OLD_INNO_KEY:
+                            try:
+                                found["inno_uninstall"] = wr.QueryValueEx(handle, "UninstallString")[0]
+                            except OSError:
+                                pass
+                        results.append(found)
+                except OSError:
+                    continue
+    return results
+
+
+def existing_install(install_dir=None):
+    """Recognise the selected app folder even if its registration is missing.
+
+    Registry metadata belongs only to that exact path. Choosing a different
+    folder must never invoke another installation's legacy uninstaller.
+    """
+    registered = _registered_installs()
+    if install_dir is not None:
+        if not str(install_dir).strip():
+            return None
+        target = normalise_dir(str(install_dir))
+        if not os.path.isfile(os.path.join(target, APP_EXE)):
+            return None
+        for record in registered:
+            if os.path.normcase(os.path.realpath(record["dir"])) == os.path.normcase(os.path.realpath(target)):
+                return dict(record, dir=target)
+        return {"dir": target, "version": ""}
+    for record in registered:
+        if os.path.isfile(os.path.join(record["dir"], APP_EXE)):
+            return record
+    target = default_install_dir()
+    if os.path.isfile(os.path.join(target, APP_EXE)):
+        return {"dir": target, "version": ""}
+    return None
 
 
 def write_registry(install_dir, version, size_bytes):

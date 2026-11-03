@@ -45,7 +45,7 @@ jobs:
           if (-not $p.WaitForExit(180000)) { Stop-Process -Id $p.Id -Force; "self-test timed out"; Get-Content screenshots_exe\steps.txt -ErrorAction SilentlyContinue; exit 1 }
           Get-Content screenshots_exe\steps.txt -Tail 3 -ErrorAction SilentlyContinue
           if ($p.ExitCode -ne 0) { Get-Content screenshots_exe\error.txt, screenshots_exe\fault.txt -ErrorAction SilentlyContinue; exit 1 }
-      - name: Upgrade from 3.1, preserve user data, run and uninstall
+      - name: Upgrade unregistered 3.1, preserve user data, run and uninstall
         timeout-minutes: 8
         shell: pwsh
         run: |
@@ -69,7 +69,10 @@ jobs:
           $dataHash = (Get-FileHash -LiteralPath $data -Algorithm SHA256).Hash
           $note = Join-Path $dir "user-notes.txt"
           [IO.File]::WriteAllText($note, "keep this user file")
-          $p = Start-Process -FilePath $setup -ArgumentList "--quiet", "--update", "--dir", "`"$dir`"" -WindowStyle Hidden -PassThru
+          $oldRegistration = Get-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\EnigmaCube"
+          if ($oldRegistration.InstallLocation -ne $dir) { throw "Unexpected 3.1 registration path" }
+          [Microsoft.Win32.Registry]::CurrentUser.DeleteSubKey("Software\Microsoft\Windows\CurrentVersion\Uninstall\EnigmaCube")
+          $p = Start-Process -FilePath $setup -ArgumentList "--quiet", "--dir", "`"$dir`"" -WindowStyle Hidden -PassThru
           $null = $p.Handle
           if (-not $p.WaitForExit(240000)) { Stop-Process -Id $p.Id -Force; "setup timed out"; exit 1 }
           if ($p.ExitCode -ne 0) { "setup exit code $($p.ExitCode)"; exit 1 }

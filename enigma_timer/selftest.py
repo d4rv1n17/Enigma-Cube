@@ -210,6 +210,19 @@ def _setup_screens(app, folder, lang):
         w.set_lang(lang)
         w.show()
         _grab(app, w, folder, "%s_20_setup" % lang)
+        # A portable/moved app can lose its uninstall registration. Selecting
+        # that folder must still switch the real setup UI into Update mode.
+        old_dir = os.path.join(tmp, "Existing Enigma Cube")
+        os.makedirs(old_dir, exist_ok=True)
+        with open(os.path.join(old_dir, setup_core.APP_EXE), "wb") as probe:
+            probe.write(b"old app fixture")
+        w.path.setText(old_dir)
+        if w.b_main.text() != w.t("update"):
+            raise AssertionError("setup did not detect an existing app folder")
+        _grab(app, w, folder, "%s_20a_update_unregistered" % lang)
+        w.path.setText(os.path.join(tmp, "Fresh Enigma Cube"))
+        if w.b_main.text() != w.t("install"):
+            raise AssertionError("setup kept stale update state after changing folder")
         w.stage = "working"
         w.pages.setCurrentIndex(1)
         w.bar.setValue(64)

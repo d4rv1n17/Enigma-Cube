@@ -1,4 +1,4 @@
-# Enigma Cube Timer 3.2
+# Enigma Cube Timer 3.2.1
 
 A speedcubing timer for Windows, built with Python and PyQt5. It works fully offline.
 
@@ -87,7 +87,7 @@ Enigma Cube generates WCA-style scrambles and shows a preview of each one. It ti
 
 ## Install
 
-1. Download `EnigmaCube-Setup-3.2.exe` from the [latest release](https://github.com/d4rv1n17/Enigma-Cube/releases/latest) and run it.
+1. Download `EnigmaCube-Setup-3.2.1.exe` from the [latest release](https://github.com/d4rv1n17/Enigma-Cube/releases/latest) and run it.
 2. If Windows shows **"Windows protected your PC"**, click **More info → Run anyway**. Windows shows this for new apps that don't have a paid code-signing certificate.
 3. Choose the folder and shortcuts, then click **Install**. If an older version is installed, the button says **Update**.
 
@@ -134,7 +134,7 @@ python main.py
    - builds the uninstaller;
    - packs the app;
    - creates the setup.
-3. When it finishes, the `Output` folder opens with `EnigmaCube-Setup-3.2.exe` inside.
+3. When it finishes, the `Output` folder opens with `EnigmaCube-Setup-3.2.1.exe` inside.
 
 **Build on GitHub Actions:** every push and pull request builds the installer automatically. Download it from **Actions → Build Windows installer → EnigmaCube-Setup**. When a new version reaches `main`, the workflow also publishes a GitHub Release with the installer attached.
 
@@ -174,6 +174,13 @@ tests/                   unit tests (scrambles, stats, every algorithm, setup lo
 ```
 
 ## Changelog
+
+### 3.2.1: detect updates in existing app folders
+
+- The installer recognises a selected folder containing `EnigmaCube.exe` even when its Windows uninstall registration is missing.
+- Selecting or typing another folder immediately updates the Install/Update button, heading and data-preservation note.
+- Registry metadata and legacy uninstall commands are used only for the selected installation, preventing an unrelated copy from being removed.
+- Update tests cover unregistered app folders and changing the target folder in both interface languages.
 
 ### 3.2: smart cubes, interactive 3D and a unified workspace
 

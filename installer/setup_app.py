@@ -177,6 +177,8 @@ class SetupWindow(QWidget):
         if mode == "install":
             self.version, self.size = core.payload_info()
         self.install_dir = install_dir or (self.existing or {}).get("dir") or core.default_install_dir()
+        if mode == "install":
+            self.existing = core.existing_install(self.install_dir)
 
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.Window)
         self.setAttribute(Qt.WA_TranslucentBackground)
@@ -346,6 +348,7 @@ class SetupWindow(QWidget):
 
         self.stage = "options"
         self.error = ""
+        self.path.textChanged.connect(self._target_changed)
         self.retranslate()
 
     # ------------------------------------------------------------------
@@ -433,6 +436,11 @@ class SetupWindow(QWidget):
         if d:
             self.path.setText(core.normalise_dir(d))
 
+    def _target_changed(self, *_):
+        if self.mode == "install" and self.stage in ("options", "error"):
+            self.existing = core.existing_install(self.path.text())
+            self.retranslate()
+
     def main_action(self):
         if self.stage == "done":
             if self.mode == "install" and self.cb_launch.isChecked():
@@ -443,6 +451,9 @@ class SetupWindow(QWidget):
             self.start()
 
     def start(self):
+        if self.mode == "install":
+            self.install_dir = core.normalise_dir(self.path.text())
+            self.existing = core.existing_install(self.install_dir)
         self.stage = "working"
         self.pages.setCurrentIndex(1)
         self.b_main.setEnabled(False)
@@ -573,7 +584,7 @@ def main(argv=None):
             target = core.normalise_dir(install_dir or core.default_install_dir())
             updating="--update" in argv
             core.install(core.resource("payload.zip"), target, desktop_shortcut=False,
-                         existing={"dir":target} if updating else core.existing_install(),
+                         existing={"dir":target} if updating else core.existing_install(target),
                          close_running=not updating)
         except Exception as e:  # noqa: BLE001 - reported through the exit code
             sys.stderr.write("install failed: %s\n" % e)
