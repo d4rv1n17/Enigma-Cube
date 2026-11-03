@@ -4,6 +4,8 @@
 Images: <img src="move:<puzzle>:<moves>"> shows the puzzle after <moves>
 applied to a solved puzzle (rendered by the Training views)."""
 
+from urllib.parse import quote
+
 PUZZLES = [
     ("333", ("3x3 cube", "Куб 3x3")),
     ("222", ("2x2 cube", "Куб 2x2")),
@@ -17,27 +19,59 @@ PUZZLES = [
 
 
 def _moves(puzzle, moves, labels, width=86):
-    cells = "".join('<td align="center"><img src="move:%s:%s" width="%d"></td>'
-                    % (puzzle, m, width) for m in moves)
-    caps = "".join('<td align="center"><b>%s</b></td>' % lab for lab in labels)
-    return '<table cellspacing="8"><tr>%s</tr><tr>%s</tr></table>' % (cells, caps)
+    columns = 4
+    width = max(width,100)
+    cards = []
+    for move, label in zip(moves, labels):
+        if not move:
+            direction = ""
+        elif "'" in move or "-" in move:
+            direction = '<span style="color:#a39d99">↺</span>'
+        elif move.endswith("2"):
+            direction = '<span style="color:#e3bc22">↻ 180°</span>'
+        else:
+            direction = '<span style="color:#a39d99">↻</span>'
+        cards.append(
+            '<td bgcolor="#191817" align="center" valign="top"><a style="color:#f4cc0c; text-decoration:none" href="demo:%s:%s"><img src="move:%s:%s" width="%d">'
+            '<br><b>%s</b></a> &nbsp;%s</td>' % (puzzle, quote(move), puzzle, move, width, label, direction))
+    rows = []
+    for start in range(0, len(cards), columns):
+        rows.append("<tr>%s</tr>" % "".join(cards[start:start + columns]))
+    return '<table cellspacing="10" cellpadding="10">%s</table>' % "".join(rows)
+
+
+def advanced_html(puzzle, language):
+    large = puzzle in ("444","555","666","777")
+    body = (_RU if language == "ru" else _EN).get("444" if large else puzzle, "")
+    if puzzle == "333":
+        return body[body.index("<h3>"):]
+    return body.replace("move:444:","move:"+puzzle+":").replace("demo:444:","demo:"+puzzle+":") if large else body if puzzle!="222" else ""
 
 
 def html(puzzle, lang):
     ru = lang == "ru"
     f = _RU if ru else _EN
-    return f.get(puzzle, "")
+    from .i18n import tr
+    return '<p style="color:#ffcf00">%s</p>' % tr("notation_play") + f.get(puzzle, "")
 
 
 _EN = {}
 _RU = {}
 
 _EN["333"] = """<h2>3x3 notation</h2>
-<p>Hold the cube with one face towards you. A letter turns that face <b>90&deg; clockwise as
+<p>Hold white on top and green towards you. A letter turns that face <b>90&deg; clockwise as
 seen looking straight at it</b>. <b>'</b> = counter-clockwise, <b>2</b> = 180&deg;.</p>
-""" + _moves("333", ["R", "L", "U", "D", "F", "B"], ["R", "L", "U", "D", "F", "B"], 78) + """
+""" + _moves(
+    "333",
+    ["F", "R", "L", "U", "D", "B",
+     "F'", "R'", "L'", "U'", "D'", "B'",
+     "F2", "R2", "L2", "U2", "D2", "B2"],
+    ["F", "R", "L", "U", "D", "B",
+     "F′", "R′", "L′", "U′", "D′", "B′",
+     "F2", "R2", "L2", "U2", "D2", "B2"], 78) + """
 <h3>Wide moves, slices and rotations</h3>
-""" + _moves("333", ["r", "M", "E", "S", "x", "y"], ["r = Rw", "M", "E", "S", "x", "y"], 78) + """
+""" + _moves("333", ["r", "M", "E", "S", "x", "y", "z"],
+                   ["r = Rw", "M", "E", "S", "x", "y", "z"], 78) + """
 <ul>
 <li><b>r</b> (or <b>Rw</b>): right face plus the middle layer. Same for l, u, d, f, b.</li>
 <li><b>M</b> follows L, <b>E</b> follows D, <b>S</b> follows F.</li>
@@ -46,11 +80,19 @@ seen looking straight at it</b>. <b>'</b> = counter-clockwise, <b>2</b> = 180&de
 </ul>"""
 
 _RU["333"] = """<h2>Нотация 3x3</h2>
-<p>Держи куб одной гранью к себе. Буква поворачивает эту грань <b>на 90&deg; по часовой
+<p>Держи куб белой гранью вверх, зелёной к себе. Буква поворачивает эту грань <b>на 90&deg; по часовой
 стрелке, если смотреть прямо на неё</b>. <b>'</b> — против часовой, <b>2</b> — на 180&deg;.</p>
-""" + _moves("333", ["R", "L", "U", "D", "F", "B"], ["R", "L", "U", "D", "F", "B"], 78) + """
+""" + _moves(
+    "333",
+    ["F", "R", "L", "U", "D", "B",
+     "F'", "R'", "L'", "U'", "D'", "B'",
+     "F2", "R2", "L2", "U2", "D2", "B2"],
+    ["F", "R", "L", "U", "D", "B",
+     "F′", "R′", "L′", "U′", "D′", "B′",
+     "F2", "R2", "L2", "U2", "D2", "B2"], 78) + """
 <h3>Широкие ходы, слайсы и повороты</h3>
-""" + _moves("333", ["r", "M", "E", "S", "x", "y"], ["r = Rw", "M", "E", "S", "x", "y"], 78) + """
+""" + _moves("333", ["r", "M", "E", "S", "x", "y", "z"],
+                   ["r = Rw", "M", "E", "S", "x", "y", "z"], 78) + """
 <ul>
 <li><b>r</b> (или <b>Rw</b>): правая грань вместе со средним слоем. Так же l, u, d, f, b.</li>
 <li><b>M</b> крутится как L, <b>E</b> — как D, <b>S</b> — как F.</li>
@@ -70,7 +112,7 @@ _EN["444"] = """<h2>Big cube notation (4x4–7x7)</h2>
 <ul>
 <li><b>R</b>: only the outer layer.</li>
 <li><b>Rw</b> (or <b>r</b> on a 4x4): the two outer layers together.</li>
-<li><b>3Rw</b>: the three outer layers together (5x5 and bigger).</li>
+<li><b>3Rw</b>: the three outer layers together (4x4 and bigger).</li>
 <li><b>2R</b>: only the second layer (an inner slice).</li>
 <li>Same for U, F, L, D, B: <b>Uw</b>, <b>3Fw</b>, <b>2U</b>…</li>
 </ul>"""
@@ -79,7 +121,7 @@ _RU["444"] = """<h2>Нотация больших кубов (4x4–7x7)</h2>
 <ul>
 <li><b>R</b>: только внешний слой.</li>
 <li><b>Rw</b> (или <b>r</b> на 4x4): два внешних слоя вместе.</li>
-<li><b>3Rw</b>: три внешних слоя вместе (5x5 и больше).</li>
+<li><b>3Rw</b>: три внешних слоя вместе (4x4 и больше).</li>
 <li><b>2R</b>: только второй слой (внутренний слайс).</li>
 <li>Так же для U, F, L, D, B: <b>Uw</b>, <b>3Fw</b>, <b>2U</b>…</li>
 </ul>"""
@@ -87,7 +129,11 @@ _RU["444"] = """<h2>Нотация больших кубов (4x4–7x7)</h2>
 _EN["pyram"] = """<h2>Pyraminx notation (WCA)</h2>
 <p>Hold the Pyraminx with one face towards you and a corner up. Each letter turns two layers
 around a corner <b>120&deg; clockwise, looking at that corner</b>.</p>
-""" + _moves("pyram", ["U", "L", "R", "B"], ["U", "L", "R", "B"], 96) + """
+""" + _moves("pyram",
+    ["U", "L", "R", "B", "U'", "L'", "R'", "B'",
+     "u", "l", "r", "b", "u'", "l'", "r'", "b'"],
+    ["U", "L", "R", "B", "U′", "L′", "R′", "B′",
+     "u tip", "l tip", "r tip", "b tip", "u′ tip", "l′ tip", "r′ tip", "b′ tip"], 96) + """
 <ul>
 <li><b>U, L, R, B</b>: the top, left, right and back corner (two layers).</li>
 <li><b>u, l, r, b</b>: only the small tip of that corner.</li>
@@ -96,7 +142,12 @@ around a corner <b>120&deg; clockwise, looking at that corner</b>.</p>
 _RU["pyram"] = """<h2>Нотация Пирамидки (WCA)</h2>
 <p>Держи Пирамидку гранью к себе и вершиной вверх. Буква поворачивает два слоя вокруг
 вершины <b>на 120&deg; по часовой стрелке, если смотреть на эту вершину</b>.</p>
-""" + _moves("pyram", ["U", "L", "R", "B"], ["U", "L", "R", "B"], 96) + """
+""" + _moves("pyram",
+    ["U", "L", "R", "B", "U'", "L'", "R'", "B'",
+     "u", "l", "r", "b", "u'", "l'", "r'", "b'"],
+    ["U", "L", "R", "B", "U′", "L′", "R′", "B′",
+     "u — кончик", "l — кончик", "r — кончик", "b — кончик",
+     "u′ — кончик", "l′ — кончик", "r′ — кончик", "b′ — кончик"], 96) + """
 <ul>
 <li><b>U, L, R, B</b>: верхняя, левая, правая и задняя вершина (два слоя).</li>
 <li><b>u, l, r, b</b>: только маленький кончик этой вершины.</li>
@@ -106,7 +157,8 @@ _RU["pyram"] = """<h2>Нотация Пирамидки (WCA)</h2>
 _EN["skewb"] = """<h2>Skewb notation (WCA)</h2>
 <p>Every move turns half of the puzzle <b>120&deg; clockwise around a corner</b>, looking at it.
 With white on top and green in front:</p>
-""" + _moves("skewb", ["R", "U", "L", "B"], ["R", "U", "L", "B"], 96) + """
+""" + _moves("skewb", ["R", "U", "L", "B", "R'", "U'", "L'", "B'"],
+                    ["R", "U", "L", "B", "R′", "U′", "L′", "B′"], 96) + """
 <ul>
 <li><b>R</b>: the bottom-back-right corner (DBR).</li>
 <li><b>U</b>: the top-back-left corner (UBL).</li>
@@ -118,7 +170,8 @@ Enigma Cube use the WCA notation above.</p>"""
 _RU["skewb"] = """<h2>Нотация Скьюба (WCA)</h2>
 <p>Каждый ход поворачивает половину головоломки <b>на 120&deg; по часовой стрелке вокруг
 угла</b>, если смотреть на него. Белый сверху, зелёный спереди:</p>
-""" + _moves("skewb", ["R", "U", "L", "B"], ["R", "U", "L", "B"], 96) + """
+""" + _moves("skewb", ["R", "U", "L", "B", "R'", "U'", "L'", "B'"],
+                    ["R", "U", "L", "B", "R′", "U′", "L′", "B′"], 96) + """
 <ul>
 <li><b>R</b>: нижний задний правый угол (DBR).</li>
 <li><b>U</b>: верхний задний левый угол (UBL).</li>
@@ -159,6 +212,8 @@ _RU["sq1"] = """<h2>Нотация Square-1</h2>
 проходит слайс.</p>"""
 
 _EN["clock"] = """<h2>Clock notation (WCA)</h2>
+<p><img src="move:clock:UR3+" width="180"><br><b>UR3+</b> — lift the upper-right pin,
+then turn the upper-right dial three hours clockwise.</p>
 <ul>
 <li><b>UR, DR, DL, UL</b>: only that pin is up; turn its dial.</li>
 <li><b>U, R, D, L</b>: the two pins on that side are up.</li>
@@ -168,6 +223,8 @@ _EN["clock"] = """<h2>Clock notation (WCA)</h2>
 </ul>
 <p>Example: <b>UR3+</b> — upper-right pin up, turn its dial 3 hours clockwise.</p>"""
 _RU["clock"] = """<h2>Нотация Clock (WCA)</h2>
+<p><img src="move:clock:UR3+" width="180"><br><b>UR3+</b> — подними правый верхний штырёк
+и поверни правое верхнее колесо на три часа по часовой стрелке.</p>
 <ul>
 <li><b>UR, DR, DL, UL</b>: поднят только этот штырёк; крутишь его колесо.</li>
 <li><b>U, R, D, L</b>: подняты два штырька с этой стороны.</li>

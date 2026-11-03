@@ -8,17 +8,21 @@ changed in one window appears in all of them immediately.
 
 import math
 import random
+import time
 from urllib.parse import unquote
 
 from PyQt5.QtCore import QObject, QPointF, QRectF, QSize, Qt, pyqtSignal
 from PyQt5.QtGui import (QColor, QFont, QImage, QPainter, QPen, QPixmap,
                          QPolygonF, QTextDocument)
-from PyQt5.QtWidgets import (QAbstractItemView, QButtonGroup, QComboBox, QFrame, QGridLayout, QHBoxLayout, QLabel, QListView, QListWidget, QListWidgetItem, QProgressBar, QPushButton, QScrollArea, QSizePolicy, QStackedWidget, QStyle, QStyledItemDelegate, QTextBrowser, QVBoxLayout, QWidget)
+from PyQt5.QtWidgets import (QAbstractItemView, QButtonGroup, QComboBox, QDialog, QFrame, QGridLayout, QHBoxLayout, QLabel, QListView, QListWidget, QListWidgetItem, QProgressBar, QPushButton, QScrollArea, QSizePolicy, QStyle, QStyledItemDelegate, QTextBrowser, QVBoxLayout, QWidget)
 
 from . import algs, caseview, insights, learn, theme
+from . import fast3
 from .fast3 import State
 from .i18n import lang, pick, tr
 from .lessons import lesson_html
+from .widgets import FadeStackedWidget, AnimatedProgressBar
+from .layouts import WrapLayout
 
 ROLE_ID = Qt.UserRole + 1
 
@@ -82,6 +86,10 @@ def clear_caches():
     DLLs are unloaded (that used to cause random crashes on exit).
     """
     _PIX_CACHE.clear()
+    import sys
+    panel = sys.modules.get("enigma_timer.notation_panel")
+    if panel is not None:
+        panel._thumbnail.cache_clear()
     from PyQt5.QtCore import QEvent
     from PyQt5.QtGui import QPixmapCache
     from PyQt5.QtWidgets import QApplication
@@ -111,6 +119,12 @@ def case_pixmap(case, size, auf=None, arrows=True):
     pm = _PIX_CACHE.get(key)
     if pm is None:
         dpr = 2.0
+        if case.puzzle=="minx":
+            from .puzzle3d import puzzle_image
+            pm = QPixmap.fromImage(puzzle_image("minx",case.setup(),int(size*dpr)))
+            pm.setDevicePixelRatio(dpr)
+            _PIX_CACHE[key] = pm
+            return pm
         img = QImage(int(size * dpr), int(size * dpr), QImage.Format_ARGB32_Premultiplied)
         img.fill(Qt.transparent)
         p = QPainter(img)
@@ -124,29 +138,25 @@ def case_pixmap(case, size, auf=None, arrows=True):
 
 
 def move_image(puzzle, moves, size):
-    """Picture of a puzzle after `moves` (for lessons and the reference)."""
-    from .puzzles import Pyraminx, Skewb, sq1_polygons, sq1_slice_lines
-    from .fastn import NState
-    if puzzle in ("333", "333oh", "333bf", "333fm"):
-        shapes = caseview.shapes(State().apply(moves), "full")
-    elif puzzle in ("222", "444", "555", "666", "777"):
-        n = int(puzzle[0])
-        shapes = caseview.iso_grid(NState(n).apply(moves).facelets(), n)
-    elif puzzle == "pyram":
-        shapes = caseview._fit([("poly", a, b) for a, b in Pyraminx().apply(moves).polygons()])
-    elif puzzle == "skewb":
-        shapes = caseview._fit([("poly", a, b) for a, b in Skewb().apply(moves).polygons()])
-    elif puzzle == "sq1":
-        shapes = caseview._fit([("poly", a, b) for a, b in sq1_polygons(moves)] +
-                               [("line", a, b) for a, b in sq1_slice_lines()])
-    else:
-        shapes = caseview._pentagon()
-    img = QImage(size, size, QImage.Format_ARGB32_Premultiplied)
+    """Render notation in the same frame and geometry as the interactive view."""
+    from .puzzle_mesh import NON_CUBES
+    from .notation import CUBE_EVENTS, notation_shapes
+    if puzzle in NON_CUBES:
+        from .puzzle3d import puzzle_image
+        return puzzle_image(puzzle,moves,size)
+    if puzzle not in CUBE_EVENTS:
+        raise ValueError("Unsupported notation puzzle: "+puzzle)
+    img = QImage(size,size,QImage.Format_ARGB32_Premultiplied)
     img.fill(Qt.transparent)
-    p = QPainter(img)
-    paint_shapes(p, QRectF(0, 0, size, size), shapes)
-    p.end()
+    painter=QPainter(img)
+    paint_shapes(painter,QRectF(0,0,size,size),notation_shapes(puzzle,moves))
+    painter.end()
     return img
+
+
+def clock_move_image(move, size):
+    """Compatibility entry point; all Clock pictures use the shared model."""
+    return move_image("clock",move,size)
 
 
 def state_image(state, view, size):
@@ -163,15 +173,23 @@ def state_image(state, view, size):
 # ---------------------------------------------------------------------------
 
 class TrainingHub(QObject):
-    """Owns the progress data; every Training view listens to `changed`."""
+    """Owns the progress data; every Training view listens to `changed`.
+
+    The smart cube feeds live state into `cube_facelets` (54-char URFDLB
+    string, or None when no cube is connected); `cube_changed` fires on
+    every move so the trainer can follow the real cube.
+    """
 
     changed = pyqtSignal()
+    cube_changed = pyqtSignal()
 
     def __init__(self, store, parent=None):
         QObject.__init__(self, parent)
         self.store = store
         self.progress = learn.Progress(store.training)
         self.path = store.settings.get("train_path") or "333"
+        self.cube_connected = False
+        self.cube_facelets = None
 
     def save(self):
         self.store.settings["train_path"] = self.path
@@ -181,8 +199,16 @@ class TrainingHub(QObject):
             pass
         self.changed.emit()
 
+    # --- live cube -----------------------------------------------------
+    def set_cube(self, facelets, connected):
+        """Called by the main window on every cube move / connect / disconnect."""
+        self.cube_facelets = facelets
+        self.cube_connected = connected
+        self.cube_changed.emit()
 
-STATUS_COLORS = {learn.NEW: "#4a4644", learn.LEARNING: theme.ACCENT, learn.LEARNED: "#3ddc84"}
+
+STATUS_COLORS = {learn.NEW: theme.FAINT, learn.LEARNING: theme.ACCENT,
+                 learn.LEARNED: theme.DONE_GREEN}
 
 
 # ---------------------------------------------------------------------------
@@ -228,7 +254,7 @@ class LevelDelegate(QStyledItemDelegate):
         hover = bool(option.state & QStyle.State_MouseOver)
         if selected or hover:
             p.setPen(Qt.NoPen)
-            p.setBrush(QColor(theme.PANEL2 if selected else "#1d1c1c"))
+            p.setBrush(QColor(theme.PANEL2 if selected else theme.PANEL))
             p.drawRoundedRect(r, 10, 10)
         done, total = prog.level_counts(lv)
         nxt = prog.next_level(self.hub.path)
@@ -237,11 +263,11 @@ class LevelDelegate(QStyledItemDelegate):
         mr = QRectF(r.left() + 10, r.top() + 12, 22, 22)
         p.setPen(Qt.NoPen)
         if done >= total:
-            p.setBrush(QColor("#3ddc84"))
+            p.setBrush(QColor(theme.DONE_GREEN))
         elif is_next:
             p.setBrush(QColor(theme.ACCENT))
         else:
-            p.setBrush(QColor("#2e2c2c"))
+            p.setBrush(QColor(theme.BORDER))
         p.drawEllipse(mr)
         f = QFont(theme.ui_font())
         f.setPixelSize(11)
@@ -258,23 +284,23 @@ class LevelDelegate(QStyledItemDelegate):
         p.setFont(f)
         p.setPen(QColor(theme.TEXT))
         p.drawText(QRectF(tx, r.top() + 6, r.right() - tx - 8, 20),
-                   Qt.AlignLeft | Qt.AlignVCenter, pick(lv.name))
+                   Qt.AlignLeft | Qt.AlignVCenter, p.fontMetrics().elidedText(pick(lv.name),Qt.ElideRight,int(r.right()-tx-8)))
         f.setPixelSize(11)
         f.setWeight(QFont.Normal)
         p.setFont(f)
         p.setPen(QColor(theme.MUTED))
         sub = "%d / %d" % (done, total) if lv.set_id else pick(lv.subtitle)
         p.drawText(QRectF(tx, r.top() + 26, r.right() - tx - 8, 16),
-                   Qt.AlignLeft | Qt.AlignVCenter, sub)
+                   Qt.AlignLeft | Qt.AlignVCenter, p.fontMetrics().elidedText(sub,Qt.ElideRight,int(r.right()-tx-8)))
         # progress bar
         if lv.set_id:
             bar = QRectF(tx, r.bottom() - 10, r.right() - tx - 12, 3)
             p.setPen(Qt.NoPen)
-            p.setBrush(QColor("#2a2828"))
+            p.setBrush(QColor(theme.BORDER))
             p.drawRoundedRect(bar, 1.5, 1.5)
             if total:
                 fill = QRectF(bar.left(), bar.top(), bar.width() * done / float(total), bar.height())
-                p.setBrush(QColor("#3ddc84" if done >= total else theme.ACCENT))
+                p.setBrush(QColor(theme.DONE_GREEN if done >= total else theme.ACCENT))
                 p.drawRoundedRect(fill, 1.5, 1.5)
         p.restore()
 
@@ -287,7 +313,7 @@ def _paint_overview_row(self, p, option):
     hover = bool(option.state & QStyle.State_MouseOver)
     if selected or hover:
         p.setPen(Qt.NoPen)
-        p.setBrush(QColor(theme.PANEL2 if selected else "#1d1c1c"))
+        p.setBrush(QColor(theme.PANEL2 if selected else theme.PANEL))
         p.drawRoundedRect(r, 10, 10)
     done, total = self.hub.progress.course_counts(self.hub.path)
     mr = QRectF(r.left() + 10, r.top() + 12, 22, 22)
@@ -376,9 +402,13 @@ class OverviewView(QWidget):
         done, total = prog.course_counts(pid)
         steps_done = sum(1 for lv in path if prog.level_done(lv))
         head = QLabel(tr("course_steps") % (steps_done, len(path)))
-        head.setStyleSheet("font-size: 18px; font-weight: 700;")
+        head.setObjectName("cardTitle")
         cl.addWidget(head)
-        bar = QProgressBar()
+        guide = QLabel(tr("learn_how_steps"))
+        guide.setObjectName("muted")
+        guide.setWordWrap(True)
+        cl.addWidget(guide)
+        bar = AnimatedProgressBar()
         bar.setRange(0, max(1, total))
         bar.setValue(done)
         bar.setTextVisible(False)
@@ -400,7 +430,7 @@ class OverviewView(QWidget):
             btns.addWidget(b)
         else:
             done_lbl = QLabel(tr("course_done"))
-            done_lbl.setStyleSheet("color: #3ddc84; font-weight: 600;")
+            done_lbl.setStyleSheet("color: %s; font-weight: 700;" % theme.DONE_GREEN)
             btns.addWidget(done_lbl)
         if due_cases:
             b = _button(tr("review_now") % len(due_cases), "seg")
@@ -409,6 +439,34 @@ class OverviewView(QWidget):
         btns.addStretch(1)
         cl.addLayout(btns)
         lay.addWidget(card)
+
+        daily = QFrame()
+        daily.setObjectName("panel")
+        dl = QVBoxLayout(daily)
+        dl.setContentsMargins(20, 14, 20, 16)
+        title = QLabel(tr("practice_today"))
+        title.setObjectName("cardTitle")
+        dl.addWidget(title)
+        goal = max(1, int(self.hub.store.settings.get("daily_review_goal", 10)))
+        reviews, _new, _xp = prog.today()
+        dl.addWidget(QLabel(tr("practice_goal") % (reviews, goal)))
+        daily_bar = AnimatedProgressBar()
+        daily_bar.setRange(0, goal)
+        daily_bar.setValue(min(reviews, goal))
+        daily_bar.setTextVisible(False)
+        daily_bar.setFixedHeight(6)
+        dl.addWidget(daily_bar)
+        weak = [c for lv in path if lv.set_id for c in lv.cases
+                if prog.data["cases"].get(c.id, {}).get("seen", 0) > 0]
+        weak.sort(key=lambda c: (prog.data["cases"][c.id].get("ok", 0) /
+                                 max(1, prog.data["cases"][c.id].get("seen", 0)),
+                                 prog.data["cases"][c.id].get("box", 0)))
+        if weak:
+            hint = QLabel(tr("practice_weak") % pick(weak[0].name))
+            hint.setWordWrap(True)
+            hint.setObjectName("muted")
+            dl.addWidget(hint)
+        lay.addWidget(daily)
 
         # steps
         tier = None
@@ -428,7 +486,7 @@ class OverviewView(QWidget):
             mark = QLabel("✓" if a >= b2 else str(i + 1))
             mark.setFixedSize(26, 26)
             mark.setAlignment(Qt.AlignCenter)
-            colour = "#3ddc84" if a >= b2 else (theme.ACCENT if nxt is lv else "#2e2c2c")
+            colour = theme.DONE_GREEN if a >= b2 else (theme.ACCENT if nxt is lv else theme.BORDER)
             mark.setStyleSheet("background: %s; color: %s; border-radius: 13px; font-weight: 700;"
                                % (colour, "#111" if (a >= b2 or nxt is lv) else theme.MUTED))
             rl.addWidget(mark)
@@ -452,7 +510,8 @@ class OverviewView(QWidget):
             cnt = QLabel("%d / %d" % (a, b2) if lv.set_id else (tr("done") if a else ""))
             cnt.setMinimumWidth(56)
             cnt.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-            cnt.setStyleSheet("color: %s; font-weight: 600;" % ("#3ddc84" if a >= b2 else theme.MUTED))
+            cnt.setStyleSheet("color: %s; font-weight: 700;" %
+                              (theme.DONE_GREEN if a >= b2 else theme.MUTED))
             rl.addWidget(cnt)
             for w in (mark, name, sub, kind, cnt):
                 w.setAttribute(Qt.WA_TransparentForMouseEvents, True)
@@ -461,7 +520,7 @@ class OverviewView(QWidget):
 
 
 class CaseDelegate(QStyledItemDelegate):
-    W, H = 150, 196
+    W, H = 170, 204
 
     def __init__(self, hub, parent=None):
         QStyledItemDelegate.__init__(self, parent)
@@ -480,7 +539,7 @@ class CaseDelegate(QStyledItemDelegate):
         selected = bool(option.state & QStyle.State_Selected)
         hover = bool(option.state & QStyle.State_MouseOver)
         p.setPen(QPen(QColor(theme.ACCENT), 1.5) if selected else Qt.NoPen)
-        p.setBrush(QColor("#1f1e1e" if (hover or selected) else theme.PANEL))
+        p.setBrush(QColor(theme.PANEL2 if (hover or selected) else theme.PANEL))
         p.drawRoundedRect(r, 12, 12)
         img = 96
         pm = case_pixmap(case, img)
@@ -526,6 +585,38 @@ def _button(text, name=None, checkable=False):
 class LessonBrowser(QTextBrowser):
     """QTextBrowser that renders move:/case: images itself."""
 
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.document().setDefaultStyleSheet("a { color: #f4cc0c; text-decoration: none; } "
+                                             "h2 { font-size: 22px; margin-bottom: 14px; } "
+                                             "p, li { line-height: 140%; } td { padding: 10px; }")
+        self.setOpenLinks(False)
+        self.anchorClicked.connect(self.open_demo)
+        self._demos = []
+
+    def open_demo(self, url):
+        value = unquote(url.toString())
+        if not value.startswith("demo:"):
+            return
+        puzzle, separator, moves = value[5:].partition(":")
+        if not separator or puzzle not in ("222", "333", "444", "555", "666", "777", "333oh", "333bf", "333fm", "pyram", "skewb", "sq1", "minx", "clock") or len(moves) > 2048:
+            return
+        from .puzzle_mesh import NON_CUBES,scene
+        if puzzle in NON_CUBES:
+            try:
+                scene(puzzle,moves)
+            except (ValueError,KeyError):
+                return
+        from .move_explorer import MoveExplorerWindow
+        win = MoveExplorerWindow(self.window(), puzzle, moves)
+        self._demos.append(win)
+        win.destroyed.connect(lambda *_: self._demos.remove(win) if win in self._demos else None)
+        owner = getattr(self.window(), "main", self.window())
+        if hasattr(owner, "extra_windows"):
+            owner.extra_windows.append(win)
+            win.destroyed.connect(lambda *_: owner.extra_windows.remove(win) if win in owner.extra_windows else None)
+        win.show()
+
     def loadResource(self, rtype, url):
         if rtype == QTextDocument.ImageResource:
             s = unquote(url.toString())
@@ -565,16 +656,17 @@ class CaseDetail(QFrame):
         self.img.setMinimumHeight(200)
         lay.addWidget(self.img)
         self.name = QLabel()
-        self.name.setStyleSheet("font-size: 20px; font-weight: 700;")
+        self.name.setObjectName("detailTitle")
+        self.name.setWordWrap(True)
         lay.addWidget(self.name)
         self.group = QLabel()
         self.group.setObjectName("muted")
+        self.group.setWordWrap(True)
         lay.addWidget(self.group)
         self.alg = QLabel()
         self.alg.setWordWrap(True)
         self.alg.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        self.alg.setStyleSheet("font-size: 18px; font-weight: 600; color: %s; padding: 8px 0;"
-                               % theme.ACCENT)
+        self.alg.setObjectName("algorithmText")
         lay.addWidget(self.alg)
         self.hint = QLabel()
         self.hint.setWordWrap(True)
@@ -599,7 +691,7 @@ class CaseDetail(QFrame):
         self.setup.setTextInteractionFlags(Qt.TextSelectableByMouse)
         lay.addWidget(self.setup)
         lay.addSpacing(6)
-        st_row = QHBoxLayout()
+        st_row = WrapLayout()
         st_row.setSpacing(4)
         self.st_group = QButtonGroup(self)
         self.st_group.setExclusive(True)
@@ -686,12 +778,17 @@ class TrainerView(QWidget):
         lay.addLayout(top)
         self.title = QLabel()
         self.title.setAlignment(Qt.AlignCenter)
-        self.title.setStyleSheet("font-size: 20px; font-weight: 700;")
+        self.title.setObjectName("detailTitle")
         lay.addWidget(self.title)
         self.stats = QLabel()
         self.stats.setAlignment(Qt.AlignCenter)
         self.stats.setObjectName("muted")
         lay.addWidget(self.stats)
+        self.coach = QLabel(tr("coach_recall"))
+        self.coach.setWordWrap(True)
+        self.coach.setAlignment(Qt.AlignCenter)
+        self.coach.setObjectName("coachText")
+        lay.addWidget(self.coach)
         lay.addStretch(1)
 
         self.img = QLabel()
@@ -722,9 +819,12 @@ class TrainerView(QWidget):
         rr = QHBoxLayout(self.rate_row)
         rr.setContentsMargins(0, 0, 0, 0)
         rr.addStretch(1)
-        for key, val in (("r_again", learn.AGAIN), ("r_hard", learn.HARD), ("r_good", learn.GOOD)):
+        for key, val, tip in (("r_again", learn.AGAIN, "1"),
+                              ("r_hard", learn.HARD, "2"),
+                              ("r_good", learn.GOOD, "3")):
             b = _button(tr(key), "rate")
             b.setMinimumWidth(130)
+            b.setToolTip(tr("rate_shortcut") % tip)
             b.clicked.connect(lambda _=False, v=val: self.rate(v))
             rr.addWidget(b)
         rr.addStretch(1)
@@ -762,11 +862,30 @@ class TrainerView(QWidget):
         self.quiz_right = 0
         self.quiz_total = 0
 
+        # live cube mode: watch the real cube, auto-detect when the case is
+        # solved by matching the state against the case database
+        self.cube_row = QWidget()
+        cr = QHBoxLayout(self.cube_row)
+        cr.setContentsMargins(0, 0, 0, 0)
+        self.cube_lbl = QLabel()
+        self.cube_lbl.setAlignment(Qt.AlignCenter)
+        self.cube_lbl.setWordWrap(True)
+        self.cube_lbl.setStyleSheet("font-size: 16px; font-weight: 600;")
+        cr.addWidget(self.cube_lbl)
+        lay.addWidget(self.cube_row)
+        self.hub.cube_changed.connect(self._cube_changed)
+        self._cube_case = None
+        self._cube_solved_seen = False
+        self._cube_done = False
+
     def start(self, title, cases, mode="review"):
         self.title_text = title
         self.mode = mode if len(cases) >= 4 else "review"
         self.trainer = learn.Trainer(self.hub.progress, cases)
         self.quiz_right = self.quiz_total = 0
+        self._cube_case = None
+        self._cube_solved_seen = False
+        self._cube_done = False
         key = "quiz_title" if self.mode == "quiz" else "trainer_title"
         self.title.setText(tr(key) % title)
         self.next()
@@ -779,12 +898,16 @@ class TrainerView(QWidget):
     def next(self):
         if not self.trainer:
             return
+        self.coach.setText(tr("coach_quiz" if self.mode == "quiz" else "coach_recall"))
         if self.mode == "quiz":
             self._next_quiz()
             return
         self.quiz_row.setVisible(False)
         self.next_btn.setVisible(False)
         self.setup.setVisible(True)
+        self._cube_case = None
+        self._cube_solved_seen = False
+        self._cube_done = False
         self.case = self.trainer.next_case()
         self.auf = learn.random_auf() if self.case.view in ("oll", "pll") else ""
         self.revealed = False
@@ -795,6 +918,9 @@ class TrainerView(QWidget):
         self.reveal_btn.setVisible(True)
         self.rate_row.setVisible(False)
         self._stats()
+        # Refresh against the last known physical state. The cube does not
+        # necessarily send another packet when the learner advances a card.
+        self._cube_changed()
 
     def _next_quiz(self):
         cases = self.trainer.cases
@@ -834,9 +960,11 @@ class TrainerView(QWidget):
         for b, c in zip(self.quiz_btns, self.options):
             b.setEnabled(False)
             if c is self.case:
-                b.setStyleSheet("background: #1f4d33; color: #3ddc84;")
+                b.setStyleSheet("background: %s; color: %s;" %
+                                (theme.SUCCESS_BG, theme.DONE_GREEN))
         if not right:
-            self.quiz_btns[k].setStyleSheet("background: #4d1f22; color: #ff6b6f;")
+            self.quiz_btns[k].setStyleSheet("background: %s; color: %s;" %
+                                            (theme.ERROR_BG, theme.DNF_RED))
         verdict = tr("quiz_right") if right else tr("quiz_wrong")
         self.answer.setText("%s\n%s" % (verdict, self.case.alg))
         self.answer.setStyleSheet("color: %s; font-size: 20px; font-weight: 600;"
@@ -849,6 +977,7 @@ class TrainerView(QWidget):
         if not self.case or self.revealed:
             return
         self.revealed = True
+        self.coach.setText(tr("coach_practice"))
         pre = {"": "", "U": "U'", "U'": "U", "U2": "U2"}[self.auf]
         self.answer.setText("%s\n%s" % (pick(self.case.name), ((pre + " ") if pre else "") + self.case.alg))
         self.answer.setStyleSheet("color: %s; font-size: 22px; font-weight: 600;" % theme.ACCENT)
@@ -856,7 +985,7 @@ class TrainerView(QWidget):
         self.rate_row.setVisible(True)
 
     def rate(self, rating):
-        if not self.case or not self.revealed or not self.trainer:
+        if not self.case or not self.revealed or not self.trainer or self._cube_done:
             return
         self.trainer.rate(self.case, rating)
         self.hub.save()
@@ -869,6 +998,62 @@ class TrainerView(QWidget):
             due = self.hub.progress.due_count(self.trainer.cases)
             self.stats.setText(tr("session_stats") % (self.trainer.reviewed, due))
 
+    # ------------------------------------------------------------------
+    # live cube: watch the real cube and detect when the case is solved
+    # ------------------------------------------------------------------
+    def _cube_active(self):
+        return (self.hub.cube_connected and self.hub.cube_facelets is not None
+                and self.trainer is not None and self.mode == "review"
+                and self.case is not None and self.case.puzzle == "333")
+
+    def _cube_changed(self):
+        if not self.hub.cube_connected:
+            self._cube_case = None
+            self._cube_solved_seen = False
+            self._cube_done = False
+            self.cube_row.setVisible(False)
+            return
+        if not self._cube_active():
+            self.cube_row.setVisible(False)
+            return
+        self.cube_row.setVisible(True)
+        facelets = self.hub.cube_facelets
+        if self._cube_done:
+            return
+        solved = fast3.is_solved_facelets(facelets)
+        if solved:
+            if self._cube_case is not None:
+                # the cube was scrambled to the case and now it is solved:
+                # the case is done
+                self._cube_done = True
+                self.rate_row.hide()
+                self.reveal_btn.hide()
+                self.coach.setText(tr("coach_confirmed"))
+                self.cube_lbl.setText(tr("cube_done") + "  ✓")
+                self.cube_lbl.setStyleSheet("color: %s; font-size: 18px; font-weight: 700;"
+                                            % theme.DONE_GREEN)
+                self.trainer.rate(self._cube_case, learn.GOOD)
+                self.hub.save()
+                self._stats()
+                self.next_btn.setVisible(True)
+                self.answer.setText(tr("cube_next"))
+                self.answer.setStyleSheet("color: %s; font-size: 14px;" % theme.FAINT)
+            else:
+                self._cube_solved_seen = True
+                self.cube_lbl.setText(tr("cube_setup") % self.case.setup())
+                self.cube_lbl.setStyleSheet("color: %s; font-size: 15px;" % theme.MUTED)
+            return
+        if not self._cube_solved_seen:
+            return
+        got = fast3.recognize_case(facelets, [self.case])
+        if got is self.case:
+            self._cube_case = self.case
+            self.cube_lbl.setText(tr("cube_recognized") % pick(self.case.name))
+            self.cube_lbl.setStyleSheet("color: %s; font-size: 15px; font-weight: 600;" % theme.ACCENT)
+        elif self._cube_case is None:
+            self.cube_lbl.setText(tr("cube_setup") % self.case.setup())
+            self.cube_lbl.setStyleSheet("color: %s; font-size: 15px;" % theme.MUTED)
+
     def keyPressEvent(self, e):
         k = e.key()
         if self.mode == "quiz":
@@ -878,6 +1063,9 @@ class TrainerView(QWidget):
                 self.next()
             elif k == Qt.Key_Escape:
                 self.stop()
+            return
+        if self._cube_done and k in (Qt.Key_Space, Qt.Key_Return, Qt.Key_Enter):
+            self.next()
             return
         if k == Qt.Key_Space:
             self.reveal()
@@ -889,6 +1077,68 @@ class TrainerView(QWidget):
             QWidget.keyPressEvent(self, e)
 
 
+class _Chip(QLabel):
+    """One rounded stat chip: an icon/number pair for the progress strip."""
+
+    def __init__(self, tip="", parent=None):
+        QLabel.__init__(self, parent)
+        self.setObjectName("chip")
+        self.setAlignment(Qt.AlignCenter)
+        self.setToolTip(tip)
+        self._bg = theme.CHIP_BG
+        self._fg = theme.TEXT
+        self._apply()
+
+    def _apply(self):
+        self.setStyleSheet("QLabel#chip { background: %s; color: %s; }" % (self._bg, self._fg))
+
+    def set(self, bg, fg):
+        self._bg, self._fg = bg, fg
+        self._apply()
+
+    def set_parts(self, value, label):
+        self.setText("%s  %s" % (value, label))
+
+
+class ProgressStrip(QWidget):
+    """Duolingo-style stats: XP total, day streak and today's reviews/new."""
+
+    def __init__(self, hub, parent=None):
+        QWidget.__init__(self, parent)
+        self.hub = hub
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(5)
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(5)
+        self.xp_chip = _Chip(tr("xp_tip"))
+        self.streak_chip = _Chip(tr("streak_tip"))
+        self.today_chip = _Chip("")
+        row.addWidget(self.xp_chip)
+        row.addWidget(self.streak_chip, 1)
+        root.addLayout(row)
+        root.addWidget(self.today_chip)
+        self.refresh()
+
+    def refresh(self):
+        prog = self.hub.progress
+        rev, new, xp_today = prog.today()
+        self.xp_chip.set_parts("⚡ %d" % prog.data.get("xp", 0), tr("xp"))
+        streak = prog.streak()
+        if streak:
+            self.streak_chip.set(theme.STREAK_BG, theme.STREAK_FG)
+        else:
+            self.streak_chip.set(theme.CHIP_BG, theme.MUTED)
+        self.streak_chip.set_parts("🔥 %d" % streak, tr("streak"))
+        self.today_chip.setToolTip(tr("today_tip") % (rev, new))
+        if rev or new:
+            self.today_chip.set(theme.TODAY_BG, theme.ACCENT)
+        else:
+            self.today_chip.set(theme.CHIP_BG, theme.TEXT)
+        self.today_chip.set_parts(tr("today_chip"), tr("today_stats") % (rev, new))
+
+
 class TrainingWidget(QWidget):
     """Sidebar with the learning path + level page + case details + trainer."""
 
@@ -898,13 +1148,12 @@ class TrainingWidget(QWidget):
         self.level = None
         self.filter = "all"
         root = QHBoxLayout(self)
-        root.setContentsMargins(0, 0, 0, 0)
-        root.setSpacing(20)
+        theme.page(self,root)
 
         # --- sidebar -------------------------------------------------------
         side = QFrame()
         side.setObjectName("panel")
-        side.setFixedWidth(250)
+        side.setFixedWidth(theme.SIDEBAR_WIDTH)
         sv = QVBoxLayout(side)
         sv.setContentsMargins(10, 14, 10, 10)
         sv.setSpacing(6)
@@ -920,18 +1169,21 @@ class TrainingWidget(QWidget):
         self.path_combo.currentIndexChanged.connect(self._path_changed)
         head.addWidget(self.path_combo, 1)
         sv.addLayout(head)
+        self.progress_strip = ProgressStrip(hub)
+        sv.addWidget(self.progress_strip)
         self.levels = QListWidget()
         self.levels.setObjectName("levels")
         self.levels.setItemDelegate(LevelDelegate(hub, self.levels))
         self.levels.setMouseTracking(True)
         self.levels.setFocusPolicy(Qt.NoFocus)
-        self.levels.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.levels.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.levels.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.levels.currentRowChanged.connect(self._level_changed)
         sv.addWidget(self.levels, 1)
         root.addWidget(side)
 
         # --- centre ----------------------------------------------------------
-        self.stack = QStackedWidget()
+        self.stack = FadeStackedWidget()
         root.addWidget(self.stack, 1)
 
         page = QWidget()
@@ -939,13 +1191,14 @@ class TrainingWidget(QWidget):
         pv.setContentsMargins(4, 4, 0, 0)
         pv.setSpacing(10)
         self.title = QLabel()
-        self.title.setStyleSheet("font-size: 26px; font-weight: 700;")
+        self.title.setObjectName("pageHeading")
+        self.title.setWordWrap(True)
         pv.addWidget(self.title)
         self.subtitle = QLabel()
         self.subtitle.setObjectName("muted")
         self.subtitle.setWordWrap(True)
         pv.addWidget(self.subtitle)
-        bar = QHBoxLayout()
+        bar = WrapLayout()
         bar.setSpacing(4)
         self.train_btn = _button("▶  " + tr("train"), "primary")
         self.train_btn.clicked.connect(self.train_level)
@@ -957,11 +1210,10 @@ class TrainingWidget(QWidget):
         self.lesson_btn = _button(tr("mark_lesson"), "seg", True)
         self.lesson_btn.clicked.connect(self._toggle_lesson)
         bar.addWidget(self.lesson_btn)
-        bar.addSpacing(14)
         self.progress_lbl = QLabel()
         self.progress_lbl.setObjectName("muted")
+        self.progress_lbl.setWordWrap(True)
         bar.addWidget(self.progress_lbl)
-        bar.addStretch(1)
         pv.addLayout(bar)
         bar = QHBoxLayout()
         bar.setSpacing(4)
@@ -975,6 +1227,9 @@ class TrainingWidget(QWidget):
             bar.addWidget(b)
         self.view_group.buttonClicked[int].connect(self._view_changed)
         bar.addStretch(1)
+        pv.addLayout(bar)
+        bar = QHBoxLayout()
+        bar.addStretch(1)
         self.filter_group = QButtonGroup(self)
         self.filter_group.setExclusive(True)
         self.filter_btns = []
@@ -987,7 +1242,7 @@ class TrainingWidget(QWidget):
         self.filter_group.buttonClicked[int].connect(self._filter_changed)
         pv.addLayout(bar)
 
-        self.content = QStackedWidget()
+        self.content = FadeStackedWidget()
         self.lesson = LessonBrowser()
         self.lesson.setOpenExternalLinks(True)
         self.content.addWidget(self.lesson)
@@ -999,11 +1254,13 @@ class TrainingWidget(QWidget):
         self.grid.setUniformItemSizes(True)
         self.grid.setSpacing(4)
         self.grid.setMouseTracking(True)
-        self.grid.setFocusPolicy(Qt.NoFocus)
+        self.grid.setFocusPolicy(Qt.StrongFocus)
         self.grid.setSelectionMode(QAbstractItemView.SingleSelection)
         self.grid.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
         self.grid.setItemDelegate(CaseDelegate(hub, self.grid))
         self.grid.currentItemChanged.connect(self._case_changed)
+        self.grid.itemClicked.connect(self._inspect_case)
+        self.grid.itemActivated.connect(lambda item: self._inspect_case(item, force=True))
         self.content.addWidget(self.grid)
         self.empty = QLabel(tr("empty_filter"))
         self.empty.setObjectName("muted")
@@ -1135,9 +1392,15 @@ class TrainingWidget(QWidget):
         """The case panel only makes sense next to the grid of cases."""
         on_grid = (self.stack.currentIndex() == 0 and self.content.currentIndex() in (1, 2)
                    and not getattr(self, "_on_overview", False))
-        self.detail.setVisible(on_grid)
+        # Keep the main lesson and case grid usable at the app's minimum
+        # window size; bring the detail pane back as soon as there is room.
+        self.detail.setVisible(on_grid and self.width() >= 1120)
         for b in self.filter_btns:
             b.setVisible(on_grid)
+
+    def resizeEvent(self, event):
+        QWidget.resizeEvent(self, event)
+        self._update_detail_visibility()
 
     def _trainer_closed(self):
         self.stack.setCurrentIndex(0)
@@ -1173,6 +1436,33 @@ class TrainingWidget(QWidget):
     def _case_changed(self, cur, prev):
         self.detail.show_case(algs.CASES.get(cur.data(ROLE_ID)) if cur else None)
 
+    def _inspect_case(self, item, force=False):
+        # Compact windows keep the grid wide; the complete inspector remains
+        # available on click instead of disappearing with the side panel.
+        if not force and not self.detail.isHidden():
+            return
+        case = algs.CASES.get(item.data(ROLE_ID)) if item else None
+        if case is None:
+            return
+        dialog = QDialog(self)
+        dialog.setWindowTitle(pick(case.name))
+        dialog.resize(490, 650)
+        dialog.setMinimumSize(360, 440)
+        layout = QVBoxLayout(dialog)
+        detail = CaseDetail(self.hub)
+        detail.show_case(case)
+        layout.addWidget(detail, 1)
+        close = QPushButton(tr("close"))
+        close.setObjectName("seg")
+        close.clicked.connect(dialog.accept)
+        layout.addWidget(close, 0, Qt.AlignRight)
+        def practise(case_id):
+            dialog.accept()
+            self.train_case(case_id)
+        detail.train_requested.connect(practise)
+        dialog.exec_()
+        dialog.deleteLater()
+
     def _toggle_lesson(self):
         if self.level and self.level.lesson:
             prog = self.hub.progress
@@ -1180,6 +1470,7 @@ class TrainingWidget(QWidget):
             self.hub.save()
 
     def refresh(self):
+        self.progress_strip.refresh()
         self.levels.viewport().update()
         self.grid.viewport().update()
         self.detail.refresh()

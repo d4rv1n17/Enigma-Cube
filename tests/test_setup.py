@@ -6,6 +6,7 @@ import sys
 import tempfile
 import unittest
 import zipfile
+from unittest.mock import patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "installer"))
 
@@ -22,6 +23,15 @@ def make_payload(folder, files, version="9.9"):
 
 
 class SetupCoreTest(unittest.TestCase):
+    def setUp(self):
+        # Unit tests operate on temporary payloads, never real installations,
+        # registry entries, shortcuts or running user processes.
+        for name in ("close_running_app", "create_shortcuts", "write_registry",
+                     "remove_shortcuts", "remove_registry"):
+            mock = patch.object(core, name)
+            mock.start()
+            self.addCleanup(mock.stop)
+
     def test_install_update_uninstall(self):
         tmp = tempfile.mkdtemp()
         target = os.path.join(tmp, "Programs", "Enigma Cube")

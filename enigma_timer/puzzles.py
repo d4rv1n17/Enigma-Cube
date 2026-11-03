@@ -54,6 +54,7 @@ class _GeoPuzzle(object):
 
     def __init__(self):
         self.slots = []      # (centroid3d, polygon2d, solved_colour)
+        self.geometry = []   # exact sticker polygons for the shared 3D viewer
         self._build()
         self.colors = [s[2] for s in self.slots]
         self._perm_cache = {}
@@ -156,6 +157,7 @@ class Pyraminx(_GeoPuzzle):
                 pts3 = [P3(*ij) for ij in t]
                 pts2 = [P2(*ij) for ij in t]
                 self.slots.append((_centroid(pts3), pts2, col))
+                self.geometry.append(tuple(pts3))
 
 
 # ---------------------------------------------------------------------------
@@ -220,10 +222,12 @@ class Skewb(_GeoPuzzle):
 
             # centre diamond
             self.slots.append((_centroid(mids), [to2(m) for m in mids], col))
+            self.geometry.append(tuple(mids))
             # four corner triangles
             for k in range(4):
                 tri = [corners[k], mids[k], mids[k - 1]]
                 self.slots.append((_centroid(tri), [to2(q) for q in tri], col))
+                self.geometry.append(tuple(tri))
 
 
 # ---------------------------------------------------------------------------

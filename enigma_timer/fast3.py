@@ -115,3 +115,105 @@ def net_rotation(alg):
 def case_state(alg):
     """The state `alg` solves, seen from the solver's starting view."""
     return State().apply(net_rotation(alg)).apply(invert(alg))
+
+
+def facelets_str(g):
+    """Fast3 facelets() dict -> 54-char URFDLB string."""
+    return "".join(g[f][r][c] for f in FACES for r in range(3) for c in range(3))
+
+
+def _rotate_str(s, perm):
+    """Rotate a 54-char facelet string by the sticker permutation `perm`.
+
+    The result at position i takes its value from s[perm[i]] (perm is the
+    sticker permutation of the applied rotation, as built by State().apply).
+    """
+    return "".join(s[perm[i]] for i in range(54))
+
+
+_PERM_CACHE = {}
+
+
+def _perm_for(alg):
+    p = _PERM_CACHE.get(alg)
+    if p is None:
+        p = tuple(State().apply(alg).arr)
+        _PERM_CACHE[alg] = p
+    return p
+
+
+def _rotations():
+    out = []
+    for rot in ROTATIONS:
+        for auf in ("", "U", "U2", "U'"):
+            out.append((rot, auf))
+    return out
+
+
+ROT_AUF_PAIRS = _rotations()
+
+
+def recognize_case(state_facelets, cases):
+    """Return the case whose picture matches `state_facelets` (54 chars).
+
+    Tries every whole-cube rotation (24) and AUF (4), so the cube may be
+    held in any orientation.  Returns None if no case matches.
+    """
+    for rot, auf in ROT_AUF_PAIRS:
+        s = _rotate_str(state_facelets, _perm_for(auf)) if auf else state_facelets
+        s = _rotate_str(s, _perm_for(rot))
+        for c in cases:
+            key = _CASE_KEYS.get(c.id)
+            if key is None:
+                st = c.state()
+                if st is None:
+                    continue
+                key = facelets_str(st.facelets())
+                _CASE_KEYS[c.id] = key
+            if s == key:
+                return c
+    return None
+
+
+_CASE_KEYS = {}
+
+
+def recognize_case_state(state_facelets, cases):
+    """Like recognize_case but also returns (rot, auf) that were matched."""
+    for rot, auf in ROT_AUF_PAIRS:
+        s = _rotate_str(state_facelets, _perm_for(auf)) if auf else state_facelets
+        s = _rotate_str(s, _perm_for(rot))
+        for c in cases:
+            key = _CASE_KEYS.get(c.id)
+            if key is None:
+                st = c.state()
+                if st is None:
+                    continue
+                key = facelets_str(st.facelets())
+                _CASE_KEYS[c.id] = key
+            if s == key:
+                return c, rot, auf
+    return None, "", ""
+
+
+def case_key(case):
+    """54-char facelet string of the case's state (cached)."""
+    key = _CASE_KEYS.get(case.id)
+    if key is None:
+        st = case.state()
+        if st is None:
+            return None
+        key = facelets_str(st.facelets())
+        _CASE_KEYS[case.id] = key
+    return key
+
+
+SOLVED_FACELETS = "U" * 9 + "R" * 9 + "F" * 9 + "D" * 9 + "L" * 9 + "B" * 9
+
+
+def is_solved_facelets(state_facelets):
+    """True if the cube is solved in any of the 24 whole-cube orientations."""
+    if state_facelets == SOLVED_FACELETS:
+        return True
+    return any(_rotate_str(state_facelets, _perm_for(rot)) == SOLVED_FACELETS
+               for rot in ROTATIONS)

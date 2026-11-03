@@ -25,7 +25,7 @@ jobs:
       - name: Install dependencies
         run: python -m pip install -r requirements.txt pyinstaller
       - name: Run tests
-        run: python -m unittest discover -s tests
+        run: python tools/run_tests.py
       - name: Do not show Windows error dialogs (they would hang the job)
         shell: pwsh
         run: |
@@ -40,34 +40,59 @@ jobs:
         timeout-minutes: 5
         shell: pwsh
         run: |
-          $p = Start-Process -FilePath "dist\EnigmaCube\EnigmaCube.exe" -ArgumentList "--selftest", "$PWD\screenshots_exe" -PassThru
+          $p = Start-Process -FilePath "dist\EnigmaCube\EnigmaCube.exe" -ArgumentList "--selftest", "$PWD\screenshots_exe" -WindowStyle Hidden -PassThru
           $null = $p.Handle  # needed so that ExitCode is available later
           if (-not $p.WaitForExit(180000)) { Stop-Process -Id $p.Id -Force; "self-test timed out"; Get-Content screenshots_exe\steps.txt -ErrorAction SilentlyContinue; exit 1 }
           Get-Content screenshots_exe\steps.txt -Tail 3 -ErrorAction SilentlyContinue
           if ($p.ExitCode -ne 0) { Get-Content screenshots_exe\error.txt, screenshots_exe\fault.txt -ErrorAction SilentlyContinue; exit 1 }
-      - name: Install, run and uninstall with the built setup
+      - name: Upgrade from 3.1, preserve user data, run and uninstall
         timeout-minutes: 8
         shell: pwsh
         run: |
           $setup = (Get-ChildItem Output\EnigmaCube-Setup-*.exe | Select-Object -First 1).FullName
           $dir = Join-Path $env:RUNNER_TEMP "Enigma Cube"
-          $p = Start-Process -FilePath $setup -ArgumentList "--quiet", "--dir", "`"$dir`"" -PassThru
+          $release = Invoke-RestMethod "https://api.github.com/repos/${{ github.repository }}/releases/tags/v3.1"
+          $asset = $release.assets | Where-Object name -eq "EnigmaCube-Setup-3.1.exe" | Select-Object -First 1
+          if (-not $asset -or $asset.digest -notmatch '^sha256:[0-9a-f]{64}$') { throw "Verified 3.1 installer unavailable" }
+          $oldSetup = Join-Path $env:RUNNER_TEMP "EnigmaCube-Setup-3.1.exe"
+          Invoke-WebRequest $asset.browser_download_url -OutFile $oldSetup
+          if ((Get-FileHash -LiteralPath $oldSetup -Algorithm SHA256).Hash.ToLowerInvariant() -ne $asset.digest.Substring(7)) { throw "3.1 installer checksum mismatch" }
+          $old = Start-Process -FilePath $oldSetup -ArgumentList "--quiet", "--dir", "`"$dir`"" -WindowStyle Hidden -PassThru
+          $null = $old.Handle
+          if (-not $old.WaitForExit(240000) -or $old.ExitCode -ne 0) { throw "Installing 3.1 failed" }
+          if (-not (Test-Path (Join-Path $dir "EnigmaCube.exe"))) { throw "3.1 app missing" }
+          $dataDir = Join-Path $env:APPDATA "EnigmaTimer"
+          New-Item -ItemType Directory -Force $dataDir | Out-Null
+          $data = Join-Path $dataDir "data.json"
+          $fixture = @{version=2; settings=@{language="ru";welcome_seen=$true;startup_intro=$false}; training=@{upgrade_check=@{learned=$true}}; current="upgrade-check"; sessions=@(@{id="upgrade-check";name="Upgrade test";puzzle="333";solves=@(@{ms=12340;p=2;s="R U R'";d=1700000000;c="keep this note"})})} | ConvertTo-Json -Depth 10
+          [IO.File]::WriteAllText($data, $fixture, [Text.UTF8Encoding]::new($false))
+          $dataHash = (Get-FileHash -LiteralPath $data -Algorithm SHA256).Hash
+          $note = Join-Path $dir "user-notes.txt"
+          [IO.File]::WriteAllText($note, "keep this user file")
+          $p = Start-Process -FilePath $setup -ArgumentList "--quiet", "--update", "--dir", "`"$dir`"" -WindowStyle Hidden -PassThru
           $null = $p.Handle
           if (-not $p.WaitForExit(240000)) { Stop-Process -Id $p.Id -Force; "setup timed out"; exit 1 }
           if ($p.ExitCode -ne 0) { "setup exit code $($p.ExitCode)"; exit 1 }
           if (-not (Test-Path (Join-Path $dir "EnigmaCube.exe"))) { "EnigmaCube.exe was not installed"; exit 1 }
+          if ((Get-FileHash -LiteralPath $data -Algorithm SHA256).Hash -ne $dataHash) { throw "Upgrade changed user data" }
+          if ([IO.File]::ReadAllText($note) -ne "keep this user file") { throw "Upgrade removed user files" }
+          $registered = Get-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\EnigmaCube"
+          $expected = python -c "from enigma_timer import VERSION; print(VERSION)"
+          if ($registered.DisplayVersion -ne $expected -or $registered.InstallLocation -ne $dir) { throw "Upgrade registered a different installation" }
           "installed: $((Get-ChildItem $dir -Recurse | Measure-Object).Count) files"
           $app = Join-Path $dir "EnigmaCube.exe"
           $shots = Join-Path $PWD "screenshots_installed"
-          $p = Start-Process -FilePath $app -ArgumentList "--selftest", "`"$shots`"" -PassThru
+          $p = Start-Process -FilePath $app -ArgumentList "--selftest", "`"$shots`"" -WindowStyle Hidden -PassThru
           $null = $p.Handle
           if (-not $p.WaitForExit(180000)) { Stop-Process -Id $p.Id -Force; "installed app timed out"; exit 1 }
           if ($p.ExitCode -ne 0) { "installed app self-test failed"; exit 1 }
-          $p = Start-Process -FilePath $app -ArgumentList "--uninstall", "--quiet" -PassThru
+          if ((Get-FileHash -LiteralPath $data -Algorithm SHA256).Hash -ne $dataHash) { throw "Self-test modified existing user data" }
+          $p = Start-Process -FilePath $app -ArgumentList "--uninstall", "--quiet" -WindowStyle Hidden -PassThru
           $null = $p.WaitForExit(60000)
           for ($i = 0; $i -lt 60 -and (Test-Path $app); $i++) { Start-Sleep -Seconds 1 }
           if (Test-Path $app) { "uninstall did not remove the app"; exit 1 }
-          "install / run / uninstall OK"
+          if ((Get-FileHash -LiteralPath $data -Algorithm SHA256).Hash -ne $dataHash) { throw "Uninstall removed retained user data" }
+          "upgrade 3.1 / preserve data / run / uninstall OK"
       - name: Size report
         shell: pwsh
         run: |

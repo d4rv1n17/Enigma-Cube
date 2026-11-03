@@ -7,6 +7,7 @@ import os
 import sys
 import time
 import uuid
+import shutil
 
 from .stats import Solve, OK, PLUS2, DNF, fmt_ms
 
@@ -20,7 +21,15 @@ DEFAULT_SETTINGS = {
     "show_preview": True,
     "show_chart": True,
     "minimal": False,           # hide side panels
-    "language": None,           # None = follow the Windows language
+    "reduce_motion": False,
+    "startup_intro": True,      # one short logo animation per cold launch
+    "language": "en",           # English unless the user explicitly selects Russian
+    "auto_update": True,        # check/download published updates in the background
+    "ble_timer": True,          # smart cube: first turn starts the timer
+    "ble_stop_on_solve": True,  # smart cube: timer stops when the cube is solved
+    "ble_show_cube": True,      # smart cube: show the live cube view
+    "welcome_seen": False,      # first-run introduction has been completed
+    "welcome_pending": False,   # resume introduction if the first run was closed early
 }
 
 
@@ -60,6 +69,7 @@ class Store(object):
 
     def __init__(self, path=None):
         self.path = path or os.path.join(data_dir(), "data.json")
+        self.is_first_run = not os.path.exists(self.path)
         self.settings = dict(DEFAULT_SETTINGS)
         self.training = {}
         self.sessions = []
@@ -69,10 +79,13 @@ class Store(object):
     # ------------------------------------------------------------------
     def load(self):
         data = None
+        self.recovered_backup = False
         if os.path.exists(self.path):
             try:
                 with io.open(self.path, "r", encoding="utf-8") as f:
                     data = json.load(f)
+                    if not isinstance(data, dict) or not isinstance(data.get("sessions", []), list):
+                        raise ValueError("Invalid data structure")
             except (ValueError, IOError, OSError):
                 # keep a copy of the broken file instead of silently losing it
                 try:
@@ -80,6 +93,16 @@ class Store(object):
                 except OSError:
                     pass
                 data = None
+        if data is None and os.path.exists(self.path + ".bak"):
+            try:
+                with io.open(self.path + ".bak", "r", encoding="utf-8") as f:
+                    candidate = json.load(f)
+                if isinstance(candidate, dict) and isinstance(candidate.get("sessions", []), list):
+                    data = candidate
+                    self.recovered_backup = True
+                    self.is_first_run = False
+            except (ValueError, IOError, OSError):
+                pass
         if data:
             self.settings.update(data.get("settings", {}))
             self.sessions = [Session.from_dict(s) for s in data.get("sessions", [])]
@@ -99,6 +122,20 @@ class Store(object):
         tmp = self.path + ".tmp"
         with io.open(tmp, "w", encoding="utf-8") as f:
             f.write(text)
+            f.flush()
+            os.fsync(f.fileno())
+        # Retain the previous valid snapshot before committing the next one.
+        if os.path.exists(self.path):
+            try:
+                with io.open(self.path, "r", encoding="utf-8") as f:
+                    json.load(f)
+                shutil.copyfile(self.path, self.path + ".bak.tmp")
+                os.replace(self.path + ".bak.tmp", self.path + ".bak")
+            except ValueError:
+                pass
+        elif not os.path.exists(self.path + ".bak"):
+            shutil.copyfile(tmp, self.path + ".bak.tmp")
+            os.replace(self.path + ".bak.tmp", self.path + ".bak")
         os.replace(tmp, self.path)
 
     # ------------------------------------------------------------------
@@ -155,6 +192,39 @@ def _cstimer_puzzle(scr_type):
         if scr_type.startswith(prefix):
             return pid
     return "333"
+
+
+# our puzzle id -> csTimer scramble type (inverse of _CSTIMER_TYPES)
+_TO_CSTIMER = {
+    "333": "333", "222": "222", "444": "444", "555": "555", "666": "666",
+    "777": "777", "pyram": "pyr", "skewb": "skb", "minx": "mgm", "sq1": "sq1",
+    "clock": "clk", "333bf": "333bf", "333oh": "333oh", "333fm": "333fm",
+}
+
+
+def export_cstimer(session, path=None):
+    """Write the session in csTimer's export format; returns the JSON text.
+
+    Format: {"session1": [[[penalty, ms], scramble, comment, unix_ts], ...],
+             "properties": {"sessionData": "{\"1\": {\"name\": ..., \"opt\": {\"scrType\": ...}}}"}}
+    Penalties: 0 = OK, 2000 = +2, -1 = DNF.
+    """
+    solves = []
+    for s in session.solves:
+        pen = {OK: 0, PLUS2: 2000, DNF: -1}.get(s.penalty, 0)
+        date = int(s.date) if s.date else 0
+        solves.append([[pen, s.ms], s.scramble.replace("\n", " "), s.comment, date])
+    data = {
+        "session1": solves,
+        "properties": {"sessionData": json.dumps(
+            {"1": {"name": session.name,
+                   "opt": {"scrType": _TO_CSTIMER.get(session.puzzle, "333")}}})},
+    }
+    text = json.dumps(data, ensure_ascii=False)
+    if path:
+        with io.open(path, "w", encoding="utf-8") as f:
+            f.write(text)
+    return text
 
 
 def import_cstimer(path):

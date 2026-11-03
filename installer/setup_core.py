@@ -11,6 +11,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 import zipfile
 
 APP_NAME = "Enigma Cube"
@@ -224,12 +225,25 @@ def read_manifest(install_dir):
         return [line.rstrip("\n") for line in f if line.strip()]
 
 
+def _inside_path(root,relative):
+    """Resolve only package-relative paths, including through existing links."""
+    relative=relative.replace("\\","/")
+    if relative.startswith("/") or ":" in relative or any(p in ("..","") for p in relative.split("/")):
+        return None
+    root=os.path.realpath(root)
+    target=os.path.realpath(os.path.join(root,*relative.split("/")))
+    try:
+        return target if target!=root and os.path.commonpath((root,target))==root else None
+    except ValueError:
+        return None
+
+
 def remove_installed_files(install_dir, progress=None):
     """Delete only files this setup installed (listed in the manifest)."""
-    files = read_manifest(install_dir)
+    files = [r for r in read_manifest(install_dir) if _inside_path(install_dir,r)]
     total = max(1, len(files))
     for i, rel in enumerate(files):
-        p = os.path.join(install_dir, rel)
+        p = _inside_path(install_dir,rel)
         try:
             if os.path.isfile(p):
                 os.remove(p)
@@ -241,7 +255,8 @@ def remove_installed_files(install_dir, progress=None):
     dirs = sorted(set(os.path.dirname(os.path.join(install_dir, r)) for r in files),
                   key=len, reverse=True)
     for d in dirs:
-        while d.startswith(install_dir) and d != install_dir:
+        root=os.path.realpath(install_dir)
+        while os.path.commonpath((root,os.path.realpath(d)))==root and os.path.realpath(d)!=root:
             try:
                 os.rmdir(d)
             except OSError:
@@ -254,38 +269,97 @@ def remove_installed_files(install_dir, progress=None):
 
 
 def install_files(payload_path, install_dir, progress=None):
-    """Extract the program and write the manifest of installed files."""
-    if os.path.isdir(install_dir):
-        remove_installed_files(install_dir)
-    else:
-        os.makedirs(install_dir)
-    written = []
-    with zipfile.ZipFile(payload_path) as z:
-        members = [m for m in z.infolist() if not m.is_dir() and m.filename != "payload.json"]
-        total = max(1, len(members))
-        for i, m in enumerate(members):
-            rel = m.filename.replace("/", os.sep)
-            dest = os.path.join(install_dir, rel)
-            if not os.path.abspath(dest).startswith(os.path.abspath(install_dir)):
-                continue  # never write outside the install folder
-            d = os.path.dirname(dest)
-            if not os.path.isdir(d):
-                os.makedirs(d)
-            with z.open(m) as src, open(dest, "wb") as out:
-                shutil.copyfileobj(src, out)
-            written.append(rel)
-            if progress:
-                progress(i + 1, total, rel)
-    with io.open(os.path.join(install_dir, MANIFEST), "w", encoding="utf-8") as f:
-        f.write("\n".join(written) + "\n")
-    return written
+    """Stage the complete payload before changing files; roll back on failure."""
+    install_dir=os.path.realpath(install_dir)
+    parent=os.path.dirname(install_dir)
+    os.makedirs(parent,exist_ok=True)
+    stage=tempfile.mkdtemp(prefix=".EnigmaCube-update-",dir=parent)
+    fresh=os.path.join(stage,"new")
+    backup=os.path.join(stage,"backup")
+    os.makedirs(fresh)
+    os.makedirs(backup)
+    preserve_backup=False
+    written=[]
+    try:
+        # CRC/decompression/disk-space failures here leave the old app intact.
+        with zipfile.ZipFile(payload_path) as archive:
+            members=[m for m in archive.infolist() if not m.is_dir() and m.filename not in ("payload.json",MANIFEST)]
+            total=max(1,len(members))
+            for index,member in enumerate(members):
+                rel=member.filename.replace("\\","/")
+                destination=_inside_path(fresh,rel)
+                if destination is None:
+                    continue
+                if rel in written:
+                    raise ValueError("Duplicate file in installer payload")
+                os.makedirs(os.path.dirname(destination),exist_ok=True)
+                with archive.open(member) as source,open(destination,"wb") as output:
+                    shutil.copyfileobj(source,output)
+                written.append(rel)
+                if progress:
+                    progress(index+1,total,rel)
+        if APP_EXE not in written:
+            raise ValueError("Installer payload does not contain the application")
+        with io.open(os.path.join(fresh,MANIFEST),"w",encoding="utf-8") as manifest:
+            manifest.write("\n".join(written)+"\n")
+        old=read_manifest(install_dir)
+        backed_up=[]
+        deployed=[]
+        os.makedirs(install_dir,exist_ok=True)
+        try:
+            for rel in dict.fromkeys(old+written+[MANIFEST]):
+                source=_inside_path(install_dir,rel)
+                destination=_inside_path(backup,rel)
+                if source is None or destination is None:
+                    if rel in written:
+                        raise ValueError("Install path points outside the application folder")
+                    continue
+                if os.path.isfile(source):
+                    os.makedirs(os.path.dirname(destination),exist_ok=True)
+                    os.replace(source,destination)
+                    backed_up.append(rel)
+            for rel in written+[MANIFEST]:
+                destination=_inside_path(install_dir,rel)
+                if destination is None:
+                    raise ValueError("Unsafe installer destination")
+                os.makedirs(os.path.dirname(destination),exist_ok=True)
+                os.replace(_inside_path(fresh,rel),destination)
+                deployed.append(rel)
+        except Exception:
+            # Restore only the paths touched by this transaction. User files
+            # outside the manifest remain in place throughout the update.
+            try:
+                for rel in deployed:
+                    path=_inside_path(install_dir,rel)
+                    if path and os.path.isfile(path):
+                        os.remove(path)
+                for rel in backed_up:
+                    destination=_inside_path(install_dir,rel)
+                    if destination is None:
+                        raise ValueError("Unsafe rollback destination")
+                    os.makedirs(os.path.dirname(destination),exist_ok=True)
+                    os.replace(_inside_path(backup,rel),destination)
+            except Exception:
+                preserve_backup=True  # retain recoverable originals on disk
+            raise
+        return written
+    finally:
+        # The temporary tree was created by us in this exact parent folder.
+        # If rollback itself failed, retain its originals for manual recovery.
+        if (not preserve_backup and os.path.dirname(os.path.realpath(stage))==parent
+                and os.path.basename(stage).startswith(".EnigmaCube-update-")):
+            try:
+                shutil.rmtree(stage)
+            except OSError:
+                pass  # a locked temporary file must not undo a completed update
 
 
-def install(payload_path, install_dir, desktop_shortcut=True, progress=None, existing=None):
+def install(payload_path, install_dir, desktop_shortcut=True, progress=None, existing=None, close_running=True):
     version, size = payload_info(payload_path)
     if existing and existing.get("inno_uninstall"):
         run_old_uninstaller(existing["inno_uninstall"])
-    close_running_app()
+    if close_running:
+        close_running_app()
     install_files(payload_path, install_dir, progress)
     create_shortcuts(install_dir, desktop_shortcut)
     write_registry(install_dir, version, size)

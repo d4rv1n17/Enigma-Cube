@@ -9,13 +9,12 @@ import sys
 
 from PyQt5.QtCore import QLocale, Qt
 from PyQt5.QtGui import QIcon
-from PyQt5.QtWidgets import QApplication
+from PyQt5.QtWidgets import QApplication,QMessageBox
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from enigma_timer import i18n, theme  # noqa: E402
-from enigma_timer.storage import Store  # noqa: E402
-from enigma_timer.window import MainWindow  # noqa: E402
+from enigma_timer.storage import Store,data_dir  # noqa: E402
 
 
 def safe_exit_setup():
@@ -55,7 +54,18 @@ def finish(code):
 
 
 def main():
+    if "--solver-worker" in sys.argv:
+        from enigma_timer.solver import worker
+        index = sys.argv.index("--solver-worker")
+        worker(sys.argv[index + 1], sys.argv[index + 2] if len(sys.argv) > index + 2 else None)
+        return
     safe_exit_setup()
+    if sys.platform.startswith("win"):
+        try:
+            import ctypes
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("EnigmaCube.Desktop")
+        except (AttributeError, OSError):
+            pass
     if "--selftest" in sys.argv:
         from enigma_timer import selftest
         i = sys.argv.index("--selftest")
@@ -71,21 +81,38 @@ def main():
         QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
     app = QApplication(sys.argv)
     app.setApplicationName("Enigma Cube")
+    app.setApplicationDisplayName("Enigma Cube")
+    app.setOrganizationName("Enigma")
     base = getattr(sys, "_MEIPASS", None) or os.path.dirname(os.path.abspath(__file__))
-    icon = os.path.join(base, "assets", "app_icon.png")
-    if os.path.exists(icon):
-        app.setWindowIcon(QIcon(icon))
+    from enigma_timer.brand import app_icon
+    app.setWindowIcon(app_icon())
     app.setStyle("Fusion")
     app.setStyleSheet(theme.stylesheet())
 
+    # Probe ownership before reading/recovering user data. A second launch
+    # brings back the existing process instead of replaying the intro.
+    from enigma_timer.instance import AppInstance
+    guard=AppInstance(os.path.join(data_dir(),"data.json"),app)
+    i18n.set_language("en")
+    try:
+        if not guard.acquire():
+            finish(0)
+    except RuntimeError:
+        QMessageBox.information(None,"Enigma Cube",i18n.tr("startup_busy"))
+        guard.close()
+        finish(1)
+    app.aboutToQuit.connect(guard.close)
+    app._instance_guard=guard
     store = Store()
-    lang = store.settings.get("language")
-    if not lang:  # auto: Russian for ru/uk/be systems, otherwise English
-        sys_lang = QLocale.system().name().split("_")[0]
-        lang = "ru" if sys_lang in ("ru", "uk", "be") else "en"
-    i18n.set_language(lang)
-    win = MainWindow(store)
-    win.show()
+    i18n.set_language(i18n.configured_language(store.settings))
+    from enigma_timer.startup import StartupController
+    def create_workspace(data):
+        from enigma_timer.window import MainWindow
+        return MainWindow(data)
+    controller=StartupController(app,store,create_workspace)
+    app._startup_controller=controller
+    guard.activated.connect(controller.activate)
+    controller.start()
     code = app.exec_()
     # Free cached pixmaps while Qt is still alive; see safe_exit_setup().
     from enigma_timer import training

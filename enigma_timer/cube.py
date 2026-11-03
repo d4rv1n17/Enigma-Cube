@@ -218,3 +218,129 @@ class Cube(object):
     def is_solved(self):
         g = self.facelets()
         return all(len(set(c for row in g[f] for c in row)) == 1 for f in g)
+
+
+# ==================================================================
+# Whole-cube rotations as facelet re-labelling
+#
+# A smart cube's firmware has its own frame of reference ("its" up, front
+# and so on).  When that frame does not agree with how the solver holds
+# the physical cube, every decoded move is drawn on the "wrong" side.
+# Fix: find the whole-cube rotation that maps the cube's frame onto the
+# solver's grip and apply it to the facelet string of every live view.
+#
+# Geometry conventions match widgets.LiveCube3DWidget: stickers read in
+# the 54-char URFDLB (Kociemba) order; each face's 3x3 is read along the
+# axes below.  Positions are odd triples from {-1, 0, 1}.
+# ==================================================================
+
+_FRAME_AXES = {
+    "U": ((0, 1, 0), (1, 0, 0), (0, 0, 1)),
+    "R": ((1, 0, 0), (0, 0, -1), (0, -1, 0)),
+    "F": ((0, 0, 1), (1, 0, 0), (0, -1, 0)),
+    "D": ((0, -1, 0), (1, 0, 0), (0, 0, -1)),
+    "L": ((-1, 0, 0), (0, 0, 1), (0, -1, 0)),
+    "B": ((0, 0, -1), (-1, 0, 0), (0, -1, 0)),
+}
+_FRAME_FACES = "URFDLB"
+
+_ID3 = ((1, 0, 0), (0, 1, 0), (0, 0, 1))
+_ROT90 = {
+    "x": ((1, 0, 0), (0, 0, -1), (0, 1, 0)),
+    "y": ((0, 0, 1), (0, 1, 0), (-1, 0, 0)),
+    "z": ((0, -1, 0), (1, 0, 0), (0, 0, 1)),
+}
+_ROT_CACHE = None
+_GEO_CACHE = None
+
+
+def _mat_mul(a, b):
+    """Row-major 3x3 matrix product."""
+    return tuple(tuple(sum(a[i][k] * b[k][j] for k in range(3))
+                       for j in range(3)) for i in range(3))
+
+
+def _mat_apply(m, v):
+    """Row-major 3x3 matrix times a 3-vector."""
+    return tuple(m[i][0] * v[0] + m[i][1] * v[1] + m[i][2] * v[2]
+                 for i in range(3))
+
+
+def _mat_inv(m):
+    """Inverse of a proper rotation matrix: its transpose."""
+    return tuple(tuple(m[j][i] for j in range(3)) for i in range(3))
+
+
+def whole_rotations():
+    """All 24 proper rotations mapping the cube onto itself.
+
+    Each is a row-major 3x3 int matrix applied as user = M . hardware.
+    Cached, identity first.
+    """
+    global _ROT_CACHE
+    if _ROT_CACHE is None:
+        by_id = {_ID3}
+        frontier = [_ID3]
+        order = [_ID3]
+        while frontier:
+            nxt = []
+            for m in frontier:
+                for r in _ROT90.values():
+                    mm = _mat_mul(m, r)
+                    if mm not in by_id:
+                        by_id.add(mm)
+                        order.append(mm)
+                        nxt.append(mm)
+            frontier = nxt
+        _ROT_CACHE = order
+    return _ROT_CACHE
+
+
+def _facelet_geometry():
+    """Map (position, outward normal) -> facelet index in the URFDLB string."""
+    global _GEO_CACHE
+    if _GEO_CACHE is None:
+        geo = {}
+        for fi, face in enumerate(_FRAME_FACES):
+            n, cd, rd = _FRAME_AXES[face]
+            for row in range(3):
+                for col in range(3):
+                    pos = tuple(n[i] + (col - 1) * cd[i] + (row - 1) * rd[i]
+                                for i in range(3))
+                    geo[(pos, n)] = fi * 9 + row * 3 + col
+        _GEO_CACHE = geo
+    return _GEO_CACHE
+
+
+def rotation_face(mat, face):
+    """Which face of the user's frame a hardware face lands on."""
+    n = _mat_apply(mat, _NORMALS[face])
+    return {v: k for k, v in _NORMALS.items()}[n]
+
+
+def frame_perm(mat):
+    """Facelet permutation of a whole-cube rotation.
+
+    Returns a 54-tuple where perm[i] = j means the rotated view shows at
+    position i the sticker the hardware reports at slot j.  Raises
+    ValueError for a matrix that is not one of the 24 rotations.
+    """
+    if tuple(mat) not in whole_rotations():
+        raise ValueError("not a whole-cube rotation")
+    geo = _facelet_geometry()
+    inv = _mat_inv(tuple(mat))
+    perm = []
+    for face in _FRAME_FACES:
+        n, cd, rd = _FRAME_AXES[face]
+        for row in range(3):
+            for col in range(3):
+                pos = tuple(n[i] + (col - 1) * cd[i] + (row - 1) * rd[i]
+                            for i in range(3))
+                src = (_mat_apply(inv, pos), _mat_apply(inv, n))
+                perm.append(geo[src])
+    return tuple(perm)
+
+
+def rotate_frame_facelets(facelets, perm):
+    """Draw one facelet string in another frame."""
+    return "".join(facelets[j] for j in perm)

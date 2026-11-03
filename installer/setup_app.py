@@ -169,7 +169,7 @@ class SetupWindow(QWidget):
     def __init__(self, mode="install", install_dir=None):
         QWidget.__init__(self)
         self.mode = mode
-        self.lang = "ru" if QLocale.system().name().split("_")[0] in ("ru", "uk", "be") else "en"
+        self.lang = "en"
         self.worker = None
         self._drag = None
         self.existing = core.existing_install() if mode == "install" else None
@@ -571,8 +571,10 @@ def main(argv=None):
         # EnigmaCube-Setup.exe --quiet [--dir <folder>]
         try:
             target = core.normalise_dir(install_dir or core.default_install_dir())
+            updating="--update" in argv
             core.install(core.resource("payload.zip"), target, desktop_shortcut=False,
-                         existing=core.existing_install())
+                         existing={"dir":target} if updating else core.existing_install(),
+                         close_running=not updating)
         except Exception as e:  # noqa: BLE001 - reported through the exit code
             sys.stderr.write("install failed: %s\n" % e)
             return 1

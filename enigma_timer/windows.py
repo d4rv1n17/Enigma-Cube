@@ -12,15 +12,17 @@ solves made in one window appear in all of them immediately.
 import sys
 import time
 
-from PyQt5.QtCore import Qt, QTimer
+from PyQt5.QtCore import Qt, QTimer, QByteArray
+from PyQt5.QtGui import QKeySequence
 from PyQt5.QtWidgets import (QHBoxLayout, QLabel, QMainWindow, QPushButton, QSizePolicy,
-                             QVBoxLayout, QWidget)
+                             QVBoxLayout, QWidget, QShortcut)
 
 from . import scramble as scr
 from . import theme
 from .i18n import tr
 from .stats import OK, Solve, fmt_ms
-from .widgets import TimerDisplay
+from .widgets import LiveCube3DWidget, TimerDisplay
+from .layouts import WrapLayout
 
 IDLE, HOLDING, READY, RUNNING, STOPPED = range(5)
 
@@ -34,36 +36,63 @@ def _dark(widget):
 class _BaseWindow(QMainWindow):
     """Dark window with a slim header: title on the left, pin on the right."""
 
-    def __init__(self, main, title, parent=None):
+    def __init__(self, main, title, parent=None, key=None):
         QMainWindow.__init__(self, parent)
         self.main = main
-        self.setWindowTitle("Enigma Cube — " + title)
+        self.store = getattr(main, "store", None) or getattr(getattr(main, "main", None), "store", None)
+        self._layout_key = key or type(self).__name__
+        self._restored_layout = False
+        self.setWindowTitle(title)
         self.setWindowIcon(main.windowIcon())
         self.setAttribute(Qt.WA_DeleteOnClose, True)
         central = QWidget()
         central.setObjectName("central")
         self.setCentralWidget(central)
         self.body = QVBoxLayout(central)
-        self.body.setSpacing(12)
-        head = QHBoxLayout()
+        theme.window_layout(self.body)
+        head = QVBoxLayout()
         head.setSpacing(8)
         self.title = QLabel(title)
-        self.title.setStyleSheet("font-size: 15px; font-weight: 700; color: %s;" % theme.MUTED)
+        self.title.setObjectName("dialogTitle")
+        self.title.setWordWrap(True)
         head.addWidget(self.title)
-        head.addStretch(1)
         self.pin = QPushButton(tr("pin"))
         self.pin.setObjectName("pin")
         self.pin.setCheckable(True)
         self.pin.setFocusPolicy(Qt.NoFocus)
         self.pin.setToolTip(tr("pin_window"))
         self.pin.toggled.connect(self.set_pinned)
-        head.addWidget(self.pin)
         self.body.addLayout(head)
+        self.fullscreen = QPushButton(tr("fullscreen"))
+        self.fullscreen.setObjectName("seg")
+        self.fullscreen.clicked.connect(self.toggle_fullscreen)
+        actions = WrapLayout()
+        actions.addWidget(self.fullscreen)
+        actions.addWidget(self.pin)
+        head.addLayout(actions)
+        QShortcut(QKeySequence("F11"), self, activated=self.toggle_fullscreen)
+        QShortcut(QKeySequence("Escape"), self, activated=self.leave_fullscreen)
+
+    def toggle_fullscreen(self):
+        if self.isFullScreen():
+            self.leave_fullscreen()
+        else:
+            self._was_maximized = self.isMaximized()
+            self._before_full_geometry = self.saveGeometry()
+            self.showFullScreen()
+            self.fullscreen.setText(tr("exit_fullscreen"))
+
+    def leave_fullscreen(self):
+        if self.isFullScreen():
+            self.showMaximized() if getattr(self, "_was_maximized", False) else self.showNormal()
+            self.fullscreen.setText(tr("fullscreen"))
 
     def set_pinned(self, on):
         geo = self.geometry()
+        state = self.windowState()
         self.setWindowFlag(Qt.WindowStaysOnTopHint, bool(on))
         self.setGeometry(geo)
+        self.setWindowState(state)
         self.show()
 
     def sync(self):
@@ -71,10 +100,26 @@ class _BaseWindow(QMainWindow):
 
     def showEvent(self, e):
         QMainWindow.showEvent(self, e)
+        if not self._restored_layout:
+            self._restored_layout = True
+            saved = self.store.settings.get("window_layouts", {}).get(self._layout_key) if self.store else None
+            if isinstance(saved, str):
+                self.restoreGeometry(QByteArray.fromBase64(saved.encode("ascii")))
+            theme.fit_to_screen(self)
         self.setFocus()
         if not getattr(self, "_dark_done", False):
             self._dark_done = True
             _dark(self)
+
+    def closeEvent(self, event):
+        if self.store is not None:
+            geometry = getattr(self, "_before_full_geometry", self.saveGeometry()) if self.isFullScreen() else self.saveGeometry()
+            self.store.settings.setdefault("window_layouts", {})[self._layout_key] = bytes(geometry.toBase64()).decode("ascii")
+            try:
+                self.store.save()
+            except OSError:
+                pass
+        super().closeEvent(event)
 
 
 class PageWindow(_BaseWindow):
@@ -84,9 +129,9 @@ class PageWindow(_BaseWindow):
               "achievements": "win_achievements"}
 
     def __init__(self, main, kind, parent=None):
-        _BaseWindow.__init__(self, main, tr(self.TITLES[kind]), parent)
+        _BaseWindow.__init__(self, main, tr(self.TITLES[kind]), parent, key=kind)
         self.kind = kind
-        self.body.setContentsMargins(18, 10, 18, 18)
+        theme.window_layout(self.body)
         from .pages import AchievementsPage, ReferencePage
         from .training import TrainingWidget
         if kind == "training":
@@ -107,6 +152,67 @@ class PageWindow(_BaseWindow):
             self.page.refresh()
 
 
+class LiveCubeWindow(_BaseWindow):
+    """A roomy, independently orbitable view of the connected smart cube."""
+
+    def __init__(self, main, parent=None):
+        _BaseWindow.__init__(self, main, tr("cube_3d_title"), parent)
+        theme.window_layout(self.body)
+        self.phase = QLabel()
+        self.phase.setWordWrap(True)
+        self.phase.setObjectName("statusText")
+        self.body.addWidget(self.phase)
+        self.view = LiveCube3DWidget()
+        self.view.setMinimumSize(220, 200)
+        self.body.addWidget(theme.visual_stage(self.view), 1)
+        self.hint = QLabel(tr("cube_3d_empty"))
+        self.hint.setObjectName("muted")
+        self.hint.setAlignment(Qt.AlignCenter)
+        self.hint.setWordWrap(True)
+        self.body.addWidget(self.hint)
+        controls = WrapLayout()
+        reset = QPushButton(tr("reset_view"))
+        reset.setObjectName("seg")
+        reset.clicked.connect(self.view.reset_view)
+        controls.addWidget(reset)
+        connect = QPushButton(tr("ble_connect"))
+        connect.clicked.connect(main._ble_show_scan)
+        controls.addWidget(connect)
+        solve = QPushButton(tr("solve_assistant"))
+        solve.setObjectName("primary")
+        solve.clicked.connect(main.open_solve_assistant)
+        controls.addWidget(solve)
+        self.body.addLayout(controls)
+        self.controls_hint = QLabel(tr("cube_3d_controls"))
+        self.controls_hint.setObjectName("muted")
+        self.controls_hint.setAlignment(Qt.AlignCenter)
+        self.controls_hint.setWordWrap(True)
+        self.body.addWidget(self.controls_hint)
+        self.resize(620, 650)
+        self.setMinimumSize(440, 500)
+        self.sync()
+
+    def sync(self):
+        state = self.main.ble_state
+        if state is None:
+            self.phase.setText(tr("assistant_wait"))
+            self.view.set_state(None)
+            self.hint.setVisible(True)
+            return
+        facelets = state.facelets()
+        if self.main._frame_perm is not None:
+            from . import cube as cube_mod
+            facelets = cube_mod.rotate_frame_facelets(facelets, self.main._frame_perm)
+        self.view.set_state(facelets)
+        from .window import RUNNING, INSPECTING
+        key = ("sync_required_detail" if not self.main._cube_state_trusted else
+               "cube_phase_solving" if self.main.state == RUNNING else
+               "cube_phase_inspection" if self.main.state == INSPECTING else
+               "cube_phase_ready" if self.main.ble_scramble_ready else "cube_phase_scramble")
+        self.phase.setText(tr(key))
+        self.hint.setVisible(False)
+
+
 class MiniTimerWindow(_BaseWindow):
     """A small always-handy timer that saves into the main session."""
 
@@ -124,7 +230,7 @@ class MiniTimerWindow(_BaseWindow):
         self.scramble.setTextFormat(Qt.PlainText)
         self.scramble.setTextInteractionFlags(Qt.TextSelectableByMouse)
         self.scramble.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-        self.scramble.setStyleSheet("font-size: 15px; color: %s;" % theme.SCRAMBLE)
+        self.scramble.setObjectName("bodyText")
         self.body.addWidget(self.scramble)
 
         self.display = TimerDisplay()
@@ -136,7 +242,8 @@ class MiniTimerWindow(_BaseWindow):
         self.hint = QLabel(tr("mini_hint"))
         self.hint.setObjectName("muted")
         self.hint.setAlignment(Qt.AlignCenter)
-        self.hint.setStyleSheet("font-size: 12px;")
+        self.hint.setWordWrap(True)
+        self.hint.setObjectName("caption")
         self.body.addWidget(self.hint)
 
         self.tick = QTimer(self)
@@ -192,6 +299,8 @@ class MiniTimerWindow(_BaseWindow):
             if not auto_repeat:
                 self._stop()
             return True
+        if self.main.solve_assistant is not None and self.main.solve_assistant.is_guiding:
+            return key == Qt.Key_Space
         if self.state == STOPPED:
             return True
         if key == Qt.Key_Escape and self.state in (HOLDING, READY):

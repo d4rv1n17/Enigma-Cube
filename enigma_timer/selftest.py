@@ -84,6 +84,9 @@ def _run(folder):
         i18n.set_language(lang)
         tmp = tempfile.mkdtemp()
         store = Store(os.path.join(tmp, "data.json"))
+        # Exercise the workspace without entering a modal first-run tour.
+        # Welcome screens are rendered separately by tools/ui_gallery.py.
+        store.settings["welcome_seen"] = True
         win = MainWindow(store)
         _KEEP.append(win)
         win.resize(1440, 880)

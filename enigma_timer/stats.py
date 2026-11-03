@@ -11,7 +11,7 @@ INF = float("inf")
 
 
 class Solve(object):
-    __slots__ = ("ms", "penalty", "scramble", "date", "comment")
+    __slots__ = ("ms", "penalty", "scramble", "date", "comment", "telemetry")
 
     def __init__(self, ms, penalty=OK, scramble="", date=None, comment=""):
         self.ms = int(ms)
@@ -19,6 +19,7 @@ class Solve(object):
         self.scramble = scramble
         self.date = date if date is not None else time.time()
         self.comment = comment
+        self.telemetry = None
 
     @property
     def value(self):
@@ -30,13 +31,18 @@ class Solve(object):
         return self.ms
 
     def to_dict(self):
-        return {"ms": self.ms, "p": self.penalty, "s": self.scramble,
+        data = {"ms": self.ms, "p": self.penalty, "s": self.scramble,
                 "d": self.date, "c": self.comment}
+        if self.telemetry:
+            data["telemetry"] = self.telemetry
+        return data
 
     @classmethod
     def from_dict(cls, d):
-        return cls(d.get("ms", 0), d.get("p", OK), d.get("s", ""),
-                   d.get("d"), d.get("c", ""))
+        solve = cls(d.get("ms", 0), d.get("p", OK), d.get("s", ""),
+                    d.get("d"), d.get("c", ""))
+        solve.telemetry = d.get("telemetry") if isinstance(d.get("telemetry"), dict) else None
+        return solve
 
 
 # ---------------------------------------------------------------------------

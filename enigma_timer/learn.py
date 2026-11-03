@@ -25,6 +25,11 @@ NEW, LEARNING, LEARNED = 0, 1, 2
 
 AGAIN, HARD, GOOD = 0, 1, 2
 
+# Duolingo-style XP: every rated card earns experience, a brand-new case a bonus
+XP_RATES = {AGAIN: 2, HARD: 5, GOOD: 10}
+XP_NEW_BONUS = 5
+XP_LESSON = 20
+
 
 # ---------------------------------------------------------------------------
 # Learning path
@@ -172,31 +177,28 @@ PATHS = {
 PATH_ORDER = ["333", "222", "444", "pyram", "skewb", "minx", "sq1", "clock",
               "333bf", "333oh", "333fm"]
 PATH_DESCRIPTIONS = {
-    "333": ("From your first solve to the Fridrich (CFOP) method used by most speedcubers, "
-            "plus Roux for those who want an alternative.",
-            "От первой сборки до метода Фридрих (CFOP), которым пользуется большинство "
-            "спидкуберов, и Roux как альтернатива."),
-    "222": ("A 2x2 is a 3x3 without edges: start layer by layer, then Ortega, then CLL.",
-            "2x2 — это 3x3 без рёбер: сначала послойно, затем Ортега, затем CLL."),
-    "444": ("Big cubes are reduced to a 3x3: centres, edge pairs, then the 3x3 you know, "
-            "plus the parity cases.",
-            "Большие кубы сводятся к 3x3: центры, пары рёбер, затем знакомый 3x3 и паритеты."),
-    "pyram": ("Pyraminx is quick to learn: tips, centres and a few edge algorithms.",
-              "Пирамидка учится быстро: вершины, центры и несколько алгоритмов для рёбер."),
-    "skewb": ("Skewb turns around corners. One layer by intuition, then a few algorithms.",
-              "Скьюб крутится вокруг углов. Один слой интуитивно, затем несколько алгоритмов."),
-    "minx": ("Megaminx is solved like a big 3x3, face after face.",
-             "Мегаминкс собирается как большой 3x3, грань за гранью."),
-    "sq1": ("Square-1 changes shape: first get it back to a cube, then solve it.",
-            "Square-1 меняет форму: сначала верни ему форму куба, потом собери."),
-    "clock": ("Clock has no layers: set the pins, turn the dials, bring every clock to 12.",
-              "У Clock нет слоёв: ставь штырьки, крути колёса, своди все часы на 12."),
-    "333bf": ("Memorise the cube, then solve it without looking.",
-              "Запомни куб и собери его, не глядя."),
-    "333oh": ("CFOP with one hand: the same algorithms with different finger tricks.",
-              "CFOP одной рукой: те же алгоритмы, другие фингертрики."),
-    "333fm": ("Find the shortest solution you can with pen and paper.",
-              "Найди самое короткое решение с ручкой и бумагой."),
+    "333": ("Learn CFOP, the method used by most speedcubers. Explore Roux as an alternative.",
+            "Освой CFOP — основной метод спидкуберов. Для разнообразия попробуй Roux."),
+    "222": ("The 2x2 has no edges. Start layer by layer, then learn Ortega and CLL.",
+            "У куба 2×2 нет рёбер. Начни с послойной сборки, затем изучи Ortega и CLL."),
+    "444": ("Solve the centres and pair the edges, then solve it like a 3x3. Learn the parity cases too.",
+            "Собери центры и спарь рёбра, затем реши куб как 3×3. Отдельно изучи паритеты."),
+    "pyram": ("Learn the tips and centres, then practise a few edge algorithms.",
+              "Освой вершины и центры, затем потренируй несколько алгоритмов для рёбер."),
+    "skewb": ("Turn a Skewb by its corners. Start with an intuitive layer, then learn a few algorithms.",
+              "Собери один слой интуитивно, затем освой несколько алгоритмов для Скьюба."),
+    "minx": ("Solve the Megaminx like a large 3x3, one face at a time.",
+             "Собирай мегаминкс по аналогии с большим 3×3 — грань за гранью."),
+    "sq1": ("Square-1 changes shape. First return it to a cube, then solve it.",
+            "Square-1 меняет форму. Сначала верни ему форму куба, затем собери."),
+    "clock": ("Set the pins, turn the dials and bring every clock to 12.",
+              "Выставь штырьки, поверни циферблаты и установи все часы на 12."),
+    "333bf": ("Memorise the cube, then solve it blindfolded.",
+              "Запомни расположение деталей, затем собери куб с закрытыми глазами."),
+    "333oh": ("Learn CFOP one-handed, with finger tricks suited to one hand.",
+              "Освой CFOP одной рукой и подбери удобные движения пальцами."),
+    "333fm": ("Search for the shortest solution and write down your ideas as you go.",
+              "Ищи самое короткое решение и записывай найденные варианты."),
 }
 
 PATH_NAMES = {
@@ -226,6 +228,14 @@ class Progress(object):
         self.data = data
         data.setdefault("cases", {})
         data.setdefault("lessons", {})
+        data.setdefault("xp", 0)
+        data.setdefault("lesson_xp_awarded", [])
+        days = data.setdefault("days", {})
+        if not isinstance(days, dict):
+            # v1 stored "days" as a plain list of active dates (for the
+            # streak).  Convert to the v2 dict-of-counts format.
+            data["days"] = {d: {"rev": 0, "new": 0, "xp": 0} for d in days}
+            days = data["days"]
 
     # --- per case ------------------------------------------------------
     def _rec(self, cid):
@@ -254,8 +264,48 @@ class Progress(object):
             r["box"] = min(r["box"], LEARNED_BOX - 1)
             r["due"] = now
 
+    def is_due(self, cid, now=None):
+        r = self._rec(cid)
+        return bool(r) and r["due"] <= (now or time.time())
+
+    # --- lessons -------------------------------------------------------
+    def lesson_done(self, lid):
+        return bool(self.data["lessons"].get(lid))
+
+    def set_lesson_done(self, lid, done=True, now=None):
+        awarded = self.data.setdefault("lesson_xp_awarded", [])
+        self.data["lessons"][lid] = bool(done)
+        if done and lid not in awarded:
+            self._log_xp(XP_LESSON, time.time() if now is None else now, kind=None)
+            awarded.append(lid)
+
+    # --- XP / streaks / today ------------------------------------------
+    def _day(self, now=None):
+        """YYYY-MM-DD key for "now" (local time)."""
+        return time.strftime("%Y-%m-%d", time.localtime(now or time.time()))
+
+    def _bump_day(self, now):
+        d = self._day(now)
+        days = self.data["days"]
+        rec = days.get(d)
+        if rec is None:
+            rec = days[d] = {"rev": 0, "new": 0, "xp": 0}
+        # keep the recent history only (enough for a long streak)
+        if len(days) > 400:
+            for k in sorted(days)[:-400]:
+                del days[k]
+        return rec
+
+    def _log_xp(self, amount, now, kind="rev"):
+        r = self._bump_day(now)
+        r["xp"] += amount
+        if kind in ("rev", "new"):
+            r[kind] += 1
+        self.data["xp"] = self.data.get("xp", 0) + amount
+
     def rate(self, cid, rating, now=None):
         now = now or time.time()
+        fresh = self._rec(cid) is None
         r = self.data["cases"].setdefault(cid, {"box": 0, "due": now, "seen": 0, "ok": 0})
         r["seen"] += 1
         if rating == AGAIN:
@@ -269,17 +319,41 @@ class Progress(object):
             r["box"] = min(MAX_BOX, r["box"] + 1)
             r["due"] = now + INTERVALS[r["box"]]
             r["ok"] += 1
+        xp = XP_RATES[rating] + (XP_NEW_BONUS if fresh else 0)
+        self._log_xp(xp, now, kind="new" if fresh else "rev")
 
-    def is_due(self, cid, now=None):
-        r = self._rec(cid)
-        return bool(r) and r["due"] <= (now or time.time())
+    def today(self, now=None):
+        """(reviews_today, new_today, xp_today)."""
+        r = self.data["days"].get(self._day(now)) or {}
+        return r.get("rev", 0), r.get("new", 0), r.get("xp", 0)
 
-    # --- lessons -------------------------------------------------------
-    def lesson_done(self, lid):
-        return bool(self.data["lessons"].get(lid))
+    def streak(self, now=None):
+        """Consecutive days (ending today or yesterday) with any activity."""
+        days = self.data["days"]
+        if not days:
+            return 0
+        now = now or time.time()
+        d = self._day(now)
+        if d not in days:
+            d = self._day(now - DAY)
+            if d not in days:
+                return 0
+        n = 0
+        cur = time.mktime(time.strptime(d, "%Y-%m-%d"))
+        while True:
+            n += 1
+            cur -= DAY
+            if time.strftime("%Y-%m-%d", time.localtime(cur)) not in days:
+                return n
 
-    def set_lesson_done(self, lid, done=True):
-        self.data["lessons"][lid] = bool(done)
+    def lesson_xp(self, lid, now=None):
+        """Award XP for finishing a lesson (only the first time)."""
+        awarded = self.data.setdefault("lesson_xp_awarded", [])
+        if lid in awarded:
+            return
+        self._log_xp(XP_LESSON, time.time() if now is None else now)
+        self.data["lessons"][lid] = True
+        awarded.append(lid)
 
     # --- levels --------------------------------------------------------
     def level_counts(self, level):
@@ -330,7 +404,8 @@ class Trainer(object):
         now = now or time.time()
         p = self.progress
         pool = [c for c in self.cases if c.id != self.last] or self.cases
-        due = [c for c in pool if p.status(c.id) == LEARNING and p.is_due(c.id, now)]
+        due = [c for c in pool if p.status(c.id) != NEW and p.is_due(c.id, now)
+               and (self.include_learned or p.status(c.id) != LEARNED)]
         if due:
             due.sort(key=lambda c: p.data["cases"][c.id]["due"])
             choice = due[0]

@@ -1,1 +1,3 @@
 PyQt5>=5.12
+bleak>=0.20
+rubik-solver-py==0.1.1

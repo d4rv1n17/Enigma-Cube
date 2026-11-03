@@ -1,10 +1,28 @@
-# Enigma Cube Timer 3.1
+# Enigma Cube Timer 3.2
 
 A speedcubing timer for Windows, built with Python and PyQt5. It works fully offline.
 
 Enigma Cube generates WCA-style scrambles and shows a preview of each one. It times solves like a Stackmat and tracks your averages and personal bests.
 
 ## Features
+
+### Smart cube workspace
+
+- **Launch intro:** a 3.6-second animated logo on a cold start, with its caption in the selected interface language. It plays to completion; clicks and keys do not skip it. Disable it in **Settings → Interface**. Reduced motion uses a brief fade; restoring a window or opening the running app again does not replay the intro.
+- **Workspace controls:** **Ctrl+K** searches pages and tools; detached windows remember their size and position. Settings are grouped into Timer, Smart cube, Interface and Shortcuts tabs, with staged defaults and a reduced-motion option.
+- **Language:** English is the default, independent of the Windows language. Select Russian in **Settings → Interface**; the selection is saved for the next launch, including the launch intro.
+- **Updates:** packaged Windows builds check GitHub Releases in the background and download verified newer installers. **Settings → Interface → Updates** provides the automatic-update switch and a manual check. Restart and install when ready; active solves are not interrupted. Downloads require the release asset's SHA-256, and installation stages files with rollback. See [update notes](docs/UPDATES.md).
+- **Giiker-style model:** rounded center caps and curved inner sticker corners, with the Enigma logo printed on the white center; small native window icons remain readable at title-bar sizes.
+- **Motion:** eased layer turns with a bounded queue, smooth zoom and camera reset, brief orbit inertia and a restrained solved-state accent. The white-center logo keeps its rotation. Pages crossfade, progress bars settle smoothly and notifications fade in and out; reduced motion disables these effects.
+
+- **Live 3D window:** open from **Cube** or **Windows**, orbit with a drag, zoom with the wheel, reset with a double click. **F11** enters full screen; **Escape** exits. Individual layer turns animate from verified state changes.
+- **Solve my cube:** an offline 3x3 assistant reads the connected Giiker, calculates a solution in a separate process and checks each physical step. A wrong turn offers recalculation from the current state. The first calculation prepares cached tables. This is guided solving: the user turns the cube.
+- **Physical synchronization:** before automatic timing, training checks or solving guidance, use **Cube → Sync physical state**. Match the real stickers to the net, or fill solved faces only when the physical cube is fully solved. A correction is saved per device and decoder and applied to complete packets, so dropped move notifications do not accumulate errors.
+- **Solve replay:** new smart-cube solves store their moves and timings. Open a solve to replay it and inspect turns, tempo and pauses. Recordings that do not match the cube's final state are labeled incomplete.
+- **Interactive notation studio:** orbitable 3D models for every puzzle: 2x2–7x7, Pyraminx (including tips), Skewb, Megaminx, shape-changing Square-1 and two-sided Clock with linked hands and pins. Choose a move and direction, then play it or open a separate window with step controls, playback speed and full screen. Cube examples use white on top and green towards you.
+- **Shared interface:** typography, spacing, cards, focus states, dialog layouts and button roles come from one theme across Timer, Training, Reference, Achievements, settings and detached tools. See [interface and model notes](docs/INTERFACE_AND_MODELS.md).
+- **Daily practice:** a configurable review goal, weak-case suggestions and plain instructions in the trainer. Achievements show the nearest pending milestone.
+- **Data recovery:** saves are atomic, retain a previous valid snapshot and restore it if the primary JSON file is damaged.
 
 ### Training
 - **Courses for all 14 events, from beginner to advanced.** Levels are marked *beginner*, *intermediate* and *advanced*:
@@ -36,13 +54,14 @@ Enigma Cube generates WCA-style scrambles and shows a preview of each one. It ti
   - Cases move through Leitner boxes: review now, then after 1 day, 3, 7, 16 and 35 days.
   - New cases are introduced 4 at a time.
 - **Notation reference** for every puzzle, with pictures of each move drawn by the built-in simulators.
-- **40 achievements** for solving (counts, sub-X singles and averages), learning (lessons and algorithm sets) and regular practice (day streaks).
+- **41 achievements** for solving (counts, sub-X singles and averages), learning (lessons and algorithm sets), guided solving and regular practice (day streaks).
 - **Multi-window mode:** the **Windows** menu opens any section in its own window: a compact mini timer (**Ctrl+T**), Training, Reference or Achievements (**Ctrl+Shift+1/2/3**). Pin any window on top of the others. Solves from the mini timer go into your current session.
 
 ### Timer and statistics
 
 - **14 WCA events:** 2x2–7x7, Pyraminx, Skewb, Megaminx, Clock, Square-1, OH, 3BLD and FMC.
-- **Scramble preview:** cube nets for 2x2–7x7 and drawings for Pyraminx, Skewb and Square-1. The previews are rendered offline.
+- **Scramble preview:** cube nets for 2x2–7x7 and orbitable 3D states for Pyraminx, Skewb, Megaminx, Square-1 and Clock. The previews are rendered offline.
+- **Scramble navigation:** back/forward buttons and **Shift+N / N** browse up to 100 scrambles per session in the current app run. Returning to a scramble restores its preview and smart-cube target; navigation is blocked during a solve.
 - **Stackmat-style timer:**
   - Hold Space until the time turns green, then release to start.
   - Optional 15-second WCA inspection with beeps at 8 and 12 s.
@@ -68,12 +87,12 @@ Enigma Cube generates WCA-style scrambles and shows a preview of each one. It ti
 
 ## Install
 
-1. Download `EnigmaCube-Setup-3.1.exe` from the [latest release](https://github.com/d4rv1n17/Enigma-2.0/releases/latest) and run it.
+1. Download `EnigmaCube-Setup-3.2.exe` from the [latest release](https://github.com/d4rv1n17/Enigma-Cube/releases/latest) and run it.
 2. If Windows shows **"Windows protected your PC"**, click **More info → Run anyway**. Windows shows this for new apps that don't have a paid code-signing certificate.
 3. Choose the folder and shortcuts, then click **Install**. If an older version is installed, the button says **Update**.
 
 The installer has these properties:
-- It has its own design and follows the Windows language (RU/EN), which you can switch at the top right.
+- It starts in English; you can select Russian at the top right.
 - It doesn't need administrator rights.
 - It updates an existing installation in place, including 2.2 installs made with the old Inno Setup installer.
 - You can uninstall the app from **Settings → Apps**. You can also delete your solves when you uninstall.
@@ -88,7 +107,8 @@ The installer has these properties:
 | Esc | Cancel inspection |
 | Ctrl+1 / Ctrl+2 / Ctrl+3 | Mark the last solve OK / +2 / DNF |
 | Ctrl+Z | Delete the last solve |
-| N | New scramble |
+| N | Next scramble (generates one at the end of history) |
+| Shift+N | Previous scramble |
 | M | Minimal mode |
 | Ctrl+E | Enter a time manually (`12.34`, `1:05.20`, `1234`, `DNF`, `14.00+`) |
 | Ctrl+, | Settings |
@@ -114,7 +134,7 @@ python main.py
    - builds the uninstaller;
    - packs the app;
    - creates the setup.
-3. When it finishes, the `Output` folder opens with `EnigmaCube-Setup-3.1.exe` inside.
+3. When it finishes, the `Output` folder opens with `EnigmaCube-Setup-3.2.exe` inside.
 
 **Build on GitHub Actions:** every push and pull request builds the installer automatically. Download it from **Actions → Build Windows installer → EnigmaCube-Setup**. When a new version reaches `main`, the workflow also publishes a GitHub Release with the installer attached.
 
@@ -154,6 +174,19 @@ tests/                   unit tests (scrambles, stats, every algorithm, setup lo
 ```
 
 ## Changelog
+
+### 3.2: smart cubes, interactive 3D and a unified workspace
+
+- Giiker discovery, reconnection and protocol detection; only smart cubes appear in discovery. Physical-state verification, scramble checking and optional automatic timing prevent unverified turns from starting a solve.
+- An offline solve assistant with checked steps, recorded-move replay and a Giiker-style model with the Enigma logo on its white center.
+- Interactive 3D notation for 2x2–7x7, Pyraminx, Skewb, Megaminx, Square-1 and Clock; separate windows with playback, zoom and fullscreen controls. White-up, green-front cube examples.
+- A shared black/yellow interface, responsive toolbars, larger achievement cards and accessible case details in compact training windows.
+- A clearer results sidebar: clickable latest/best solves, available averages, explanations, single-click solve details and improved progress/distribution charts.
+- Per-session scramble history with back/forward controls and Shift+N / N shortcuts.
+- A short optional launch animation, first-run tour, English by default and a saved Russian-language choice. First launch maximizes the workspace; subsequent launches restore the chosen window size and state.
+- Background update checks and verified downloads with user-controlled installation, staged replacement and rollback. Atomic data saves and backup recovery.
+
+**Upgrading from 3.1:** download and run the 3.2 installer once. Automatic updates are available starting with 3.2; existing solves and training data are retained.
 
 ### 3.1: clearer UI, deeper training, any window
 - **Windows** menu: open the mini timer, Training, Reference or Achievements in separate windows, and pin them on top.

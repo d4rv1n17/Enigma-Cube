@@ -209,6 +209,8 @@ _a("windows", TRAINING, "⧉", ("Multitasker", "Многозадачность")
    _flag("training_window"))
 _a("reference", TRAINING, "?", ("Curious", "Любопытство"),
    ("Open the notation reference.", "Открой справочник нотации."), _flag("reference"))
+_a("guided_solve", TRAINING, "✓", ("Back to solved", "Снова собран"),
+   ("Complete a state-verified guided solve.", "Собери куб с пошаговой проверкой состояния."), _flag("guided_solve"))
 
 BY_ID = dict((a["id"], a) for a in A)
 
@@ -234,10 +236,13 @@ def check(store, now=None):
 
 def mark_day(store, when=None):
     """Remember that the user practised today (for streaks)."""
-    days = store.training.setdefault("days", [])
+    days = store.training.setdefault("days", {})
     d = time.strftime("%Y-%m-%d", time.localtime(when or time.time()))
     if d not in days:
-        days.append(d)
+        if isinstance(days, dict):
+            days[d] = {"rev": 0, "new": 0, "xp": 0}
+        else:
+            days.append(d)
 
 
 def set_flag(store, name):

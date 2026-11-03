@@ -3,11 +3,11 @@
 
 import time
 
-from PyQt5.QtCore import QRectF, QSize, Qt
+from PyQt5.QtCore import QEvent, QRectF, QSize, Qt
 from PyQt5.QtGui import QColor, QFont, QPainter, QPen
-from PyQt5.QtWidgets import (QAbstractItemView, QFrame, QHBoxLayout, QLabel, QListView,
+from PyQt5.QtWidgets import (QAbstractItemView, QComboBox, QFrame, QHBoxLayout, QLabel, QListView,
                              QListWidget, QListWidgetItem, QStyle, QStyledItemDelegate,
-                             QVBoxLayout, QWidget)
+                             QVBoxLayout, QWidget, QStackedWidget)
 
 from . import achievements as ach
 from . import reference, theme
@@ -24,11 +24,10 @@ class ReferencePage(QWidget):
         QWidget.__init__(self, parent)
         self.hub = hub
         root = QHBoxLayout(self)
-        root.setContentsMargins(0, 0, 0, 0)
-        root.setSpacing(20)
+        theme.page(self,root)
         side = QFrame()
         side.setObjectName("panel")
-        side.setFixedWidth(250)
+        side.setFixedWidth(theme.SIDEBAR_WIDTH)
         sv = QVBoxLayout(side)
         sv.setContentsMargins(10, 14, 10, 10)
         t = QLabel(tr("reference").upper())
@@ -36,26 +35,36 @@ class ReferencePage(QWidget):
         sv.addWidget(t)
         self.list = QListWidget()
         self.list.setObjectName("plainlist")
+        self.list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.list.setFocusPolicy(Qt.NoFocus)
         for pid, name in reference.PUZZLES:
             it = QListWidgetItem(pick(name))
             it.setData(ROLE, pid)
-            it.setSizeHint(QSize(200, 40))
+            it.setSizeHint(QSize(170, 40))
             self.list.addItem(it)
         self.list.currentRowChanged.connect(self._show)
         sv.addWidget(self.list, 1)
         root.addWidget(side)
         self.text = LessonBrowser()
-        root.addWidget(self.text, 1)
+        from .notation_panel import CubeNotationPanel
+        self.cube_notation = CubeNotationPanel(self.text.open_demo, self)
+        self.content = QStackedWidget()
+        self.content.addWidget(self.text)
+        self.content.addWidget(self.cube_notation)
+        root.addWidget(self.content, 1)
         self.list.setCurrentRow(0)
-        if not self.text.toPlainText():
-            self._show(0)
 
     def _show(self, row):
         it = self.list.item(row)
         if it is None:
             return
-        self.text.setHtml(reference.html(it.data(ROLE), lang()))
+        puzzle = it.data(ROLE)
+        if puzzle in ("333", "222", "444", "pyram", "skewb", "sq1", "minx", "clock"):
+            self.cube_notation.set_puzzle(puzzle)
+            self.content.setCurrentWidget(self.cube_notation)
+        else:
+            self.text.setHtml(reference.html(puzzle, lang()))
+            self.content.setCurrentWidget(self.text)
 
     def show_puzzle(self, pid):
         for row in range(self.list.count()):
@@ -65,14 +74,15 @@ class ReferencePage(QWidget):
 
 
 class BadgeDelegate(QStyledItemDelegate):
-    W, H = 236, 112
+    W, H = 280, 152
 
     def __init__(self, page, parent=None):
         QStyledItemDelegate.__init__(self, parent)
         self.page = page
 
     def sizeHint(self, option, index):
-        return QSize(self.W, self.H)
+        width = self.page.grid.gridSize().width()
+        return QSize(max(220, width-4) if width > 0 else self.W, self.H)
 
     def paint(self, p, option, index):
         a = ach.BY_ID.get(index.data(ROLE))
@@ -85,16 +95,16 @@ class BadgeDelegate(QStyledItemDelegate):
         p.setRenderHint(QPainter.Antialiasing)
         hover = bool(option.state & QStyle.State_MouseOver)
         p.setPen(Qt.NoPen)
-        p.setBrush(QColor("#1f1e1e" if hover else theme.PANEL))
+        p.setBrush(QColor(theme.PANEL2 if hover else theme.PANEL))
         p.drawRoundedRect(r, 12, 12)
         # badge
-        b = QRectF(r.left() + 14, r.top() + 16, 52, 52)
+        b = QRectF(r.left() + 16, r.top() + 18, 44, 44)
         if unlocked:
             p.setBrush(QColor(theme.ACCENT))
             p.drawEllipse(b)
             p.setPen(QColor("#111111"))
         else:
-            p.setPen(QPen(QColor("#3a3737"), 2))
+            p.setPen(QPen(QColor(theme.BORDER), 2))
             p.setBrush(Qt.NoBrush)
             p.drawEllipse(b.adjusted(1, 1, -1, -1))
             p.setPen(QColor(theme.FAINT))
@@ -110,13 +120,13 @@ class BadgeDelegate(QStyledItemDelegate):
         f.setWeight(QFont.DemiBold)
         p.setFont(f)
         p.setPen(QColor(theme.TEXT if unlocked else theme.MUTED))
-        p.drawText(QRectF(tx, r.top() + 12, r.right() - tx - 10, 20),
-                   Qt.AlignLeft | Qt.AlignVCenter, pick(a["name"]))
-        f.setPixelSize(11)
+        p.drawText(QRectF(tx, r.top() + 14, r.right() - tx - 14, 36),
+                   Qt.AlignLeft | Qt.AlignTop | Qt.TextWordWrap, pick(a["name"]))
+        f.setPixelSize(12)
         f.setWeight(QFont.Normal)
         p.setFont(f)
         p.setPen(QColor(theme.MUTED))
-        p.drawText(QRectF(tx, r.top() + 34, r.right() - tx - 10, 34),
+        p.drawText(QRectF(tx, r.top() + 52, r.right() - tx - 14, 62),
                    Qt.AlignLeft | Qt.AlignTop | Qt.TextWordWrap, pick(a["desc"]))
         if unlocked:
             p.setPen(QColor(theme.ACCENT))
@@ -128,7 +138,7 @@ class BadgeDelegate(QStyledItemDelegate):
             lw = p.fontMetrics().boundingRect(label).width() + 10
             bar = QRectF(tx, r.bottom() - 16, max(20.0, r.right() - tx - 14 - lw), 4)
             p.setPen(Qt.NoPen)
-            p.setBrush(QColor("#2a2828"))
+            p.setBrush(QColor(theme.BORDER))
             p.drawRoundedRect(bar, 2, 2)
             p.setBrush(QColor(theme.ACCENT))
             p.drawRoundedRect(QRectF(bar.left(), bar.top(),
@@ -146,27 +156,60 @@ class AchievementsPage(QWidget):
         self.unlocked = {}
         self.status = {}
         lay = QVBoxLayout(self)
-        lay.setContentsMargins(4, 4, 0, 0)
-        lay.setSpacing(8)
+        theme.page(self,lay)
         self.title = QLabel(tr("achievements"))
-        self.title.setStyleSheet("font-size: 26px; font-weight: 700;")
+        self.title.setObjectName("pageHeading")
         lay.addWidget(self.title)
         self.summary = QLabel()
         self.summary.setObjectName("muted")
+        self.summary.setWordWrap(True)
         lay.addWidget(self.summary)
+        self.next_goal = QLabel()
+        self.next_goal.setWordWrap(True)
+        self.next_goal.setObjectName("statusText")
+        lay.addWidget(self.next_goal)
+        self.filter = QComboBox()
+        self.filter.setObjectName("event")
+        for key, value in (("all", "ach_filter_all"),
+                           (ach.SOLVING, "ach_filter_solving"),
+                           (ach.TRAINING, "ach_filter_training"),
+                           ("unlocked", "ach_filter_unlocked")):
+            self.filter.addItem(tr(value), key)
+        self.filter.currentIndexChanged.connect(self.refresh)
+        lay.addWidget(self.filter, 0, Qt.AlignLeft)
         self.grid = QListWidget()
         self.grid.setObjectName("grid")
         self.grid.setViewMode(QListView.IconMode)
         self.grid.setResizeMode(QListView.Adjust)
         self.grid.setMovement(QListView.Static)
-        self.grid.setUniformItemSizes(True)
+        self.grid.setUniformItemSizes(False)
         self.grid.setSelectionMode(QAbstractItemView.NoSelection)
         self.grid.setFocusPolicy(Qt.NoFocus)
         self.grid.setMouseTracking(True)
+        self.grid.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.grid.viewport().installEventFilter(self)
         self.grid.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
         self.grid.setItemDelegate(BadgeDelegate(self, self.grid))
         lay.addWidget(self.grid, 1)
         self.refresh()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._layout_badges()
+
+    def eventFilter(self, obj, event):
+        if obj is self.grid.viewport() and event.type() == QEvent.Resize:
+            self._layout_badges()
+        return super().eventFilter(obj, event)
+
+    def _layout_badges(self):
+        if not hasattr(self, "grid"):
+            return
+        width = max(1, self.grid.viewport().width())
+        columns = max(1, width // BadgeDelegate.W)
+        target = QSize(max(224, width // columns-4), BadgeDelegate.H)
+        if self.grid.gridSize() != target:
+            self.grid.setGridSize(target)
 
     def refresh(self):
         _new, self.status = ach.check(self.store)
@@ -175,8 +218,21 @@ class AchievementsPage(QWidget):
         order = sorted(ach.A, key=lambda a: (a["id"] not in self.unlocked,
                                              a["cat"] != ach.SOLVING))
         for a in order:
+            selected = self.filter.currentData() if hasattr(self, "filter") else "all"
+            if selected == "unlocked" and a["id"] not in self.unlocked:
+                continue
+            if selected in (ach.SOLVING, ach.TRAINING) and a["cat"] != selected:
+                continue
             it = QListWidgetItem()
             it.setData(ROLE, a["id"])
-            it.setSizeHint(QSize(BadgeDelegate.W, BadgeDelegate.H))
+            it.setToolTip(pick(a["name"])+"\n"+pick(a["desc"]))
             self.grid.addItem(it)
         self.summary.setText(tr("ach_summary") % (len(self.unlocked), len(ach.A)))
+        pending = [a for a in ach.A if a["id"] not in self.unlocked]
+        pending.sort(key=lambda a: self.status[a["id"]][0] / max(1, self.status[a["id"]][1]), reverse=True)
+        if pending:
+            a = pending[0]
+            value, target = self.status[a["id"]]
+            self.next_goal.setText(tr("ach_next") % (pick(a["name"]), value, target))
+        else:
+            self.next_goal.clear()

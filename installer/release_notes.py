@@ -40,7 +40,7 @@ def main():
 
 %(notes)s
 """ % {"v": version, "notes": notes,
-       "repo": os.environ.get("GITHUB_REPOSITORY", "d4rv1n17/Enigma-2.0")})
+       "repo": os.environ.get("GITHUB_REPOSITORY", "d4rv1n17/Enigma-Cube")})
 
 
 if __name__ == "__main__":

@@ -209,7 +209,7 @@ def _iso(state, view):
     return out
 
 
-def iso_grid(g, n, grey_top=False):
+def iso_grid(g, n, grey_top=False, palette=None):
     """3D view (U, F, R) of any n x n cube from its facelets."""
     def P(x, y, z):
         return ((x - z) * _C30, (x + z) * _S30 - y)
@@ -217,8 +217,10 @@ def iso_grid(g, n, grey_top=False):
     h = n / 2.0
     quads = []
 
+    colors = DISPLAY if palette is None else palette
+
     def add(face, r, c, corners):
-        colour = DISPLAY[g[face][r][c]]
+        colour = colors[g[face][r][c]]
         cx = sum(p[0] for p in corners) / 4.0
         cy = sum(p[1] for p in corners) / 4.0
         pts = [(cx + (p[0] - cx) * 0.86, cy + (p[1] - cy) * 0.86) for p in corners]

@@ -3,3 +3,16 @@ build/
 dist/
 Output/
 *.spec
+.previews/
+*.log
+/_calibrate.py
+/_check_theme.py
+/_debug_run.py
+/_diag_frame.py
+/_diag_frame2.py
+/_t.py
+/check_theme_tmp.py
+/screenshots/
+/screenshots_exe/
+/screenshots_installed/
+/release_notes.md
