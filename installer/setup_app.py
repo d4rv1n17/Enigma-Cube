@@ -549,12 +549,33 @@ def _relaunch_from_temp(install_dir, quiet):
     tmp = os.path.join(tempfile.gettempdir(), TEMP_PREFIX + str(os.getpid()))
     shutil.copytree(install_dir, tmp)
     exe = os.path.join(tmp, os.path.basename(sys.executable))
-    args = [exe, "--uninstall", "--dir", install_dir] + (["--quiet"] if quiet else [])
+    args = [exe, "--uninstall", "--dir", install_dir, "--wait-pid", str(os.getpid())] + (["--quiet"] if quiet else [])
     subprocess.Popen(args, cwd=tmp, close_fds=True)
 
 
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
+    if '--wait-pid' in argv and sys.platform.startswith('win'):
+        # The copied uninstaller must not mistake its exiting launcher for an
+        # active timer now that changing installations never force-kills apps.
+        import ctypes
+        kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+        kernel.OpenProcess.restype = ctypes.c_void_p
+        kernel.OpenProcess.argtypes = (ctypes.c_uint32, ctypes.c_int, ctypes.c_uint32)
+        kernel.WaitForSingleObject.argtypes = (ctypes.c_void_p, ctypes.c_uint32)
+        kernel.CloseHandle.argtypes = (ctypes.c_void_p,)
+        pid = int(argv[argv.index('--wait-pid') + 1])
+        if pid <= 0 or pid == os.getpid():
+            raise RuntimeError('Invalid uninstall parent process.')
+        handle = kernel.OpenProcess(0x100000, False, pid)
+        if handle:
+            try:
+                if kernel.WaitForSingleObject(handle, 15000) != 0:
+                    raise RuntimeError('Close the original uninstaller before trying again.')
+            finally:
+                kernel.CloseHandle(handle)
+        elif ctypes.get_last_error() != 87:  # Already exited processes are fine.
+            raise RuntimeError('Could not wait for the original uninstaller.')
     try:  # avoid crashes on exit (see main.py)
         from PyQt5 import sip
         sip.setdestroyonexit(False)

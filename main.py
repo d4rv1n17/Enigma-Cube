@@ -75,6 +75,9 @@ def main():
         # Settings -> Apps -> Enigma Cube -> Uninstall runs "EnigmaCube.exe --uninstall"
         from installer import setup_app
         sys.exit(setup_app.main())
+    from enigma_timer.hub_link import ensure_launch
+    if not ensure_launch():
+        return
     if hasattr(Qt, "AA_EnableHighDpiScaling"):
         QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
     if hasattr(Qt, "AA_UseHighDpiPixmaps"):

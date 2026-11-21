@@ -49,6 +49,16 @@ jobs:
         timeout-minutes: 8
         shell: pwsh
         run: |
+          # Dependent product installers require a verified supported Hub first.
+          $hubRelease = Invoke-RestMethod 'https://api.github.com/repos/d4rv1n17/Enigma-Hub/releases/latest'
+          if ([version]$hubRelease.tag_name.TrimStart('v') -lt [version]'1.3.0') { throw 'Enigma Hub 1.3.0 must be published first' }
+          $hubAsset = $hubRelease.assets | Where-Object name -eq 'EnigmaHubSetup.exe' | Select-Object -First 1
+          if ($hubAsset.digest -notmatch '^sha256:[0-9a-f]{64}$' -or $hubAsset.browser_download_url -notlike 'https://github.com/d4rv1n17/Enigma-Hub/releases/download/*/EnigmaHubSetup.exe') { throw 'Unverified Hub asset' }
+          $hubSetup = Join-Path $env:RUNNER_TEMP 'EnigmaHubSetup.exe'
+          Invoke-WebRequest $hubAsset.browser_download_url -OutFile $hubSetup
+          if ((Get-FileHash -LiteralPath $hubSetup -Algorithm SHA256).Hash.ToLowerInvariant() -ne $hubAsset.digest.Substring(7)) { throw 'Hub checksum mismatch' }
+          $hubProcess = Start-Process -FilePath $hubSetup -ArgumentList '--quiet' -WindowStyle Hidden -PassThru -Wait
+          if ($hubProcess.ExitCode -ne 0) { throw 'Hub installation failed' }
           $setup = (Get-ChildItem Output\EnigmaCube-Setup-*.exe | Select-Object -First 1).FullName
           $dir = Join-Path $env:RUNNER_TEMP "Enigma Cube"
           $release = Invoke-RestMethod "https://api.github.com/repos/${{ github.repository }}/releases/tags/v3.1"

@@ -206,13 +206,16 @@ def remove_shortcuts():
 
 
 def close_running_app():
-    """Close Enigma Cube if it is open (never this process: when uninstalling,
-    this process is itself a copy of EnigmaCube.exe)."""
+    """Require an explicit close. Never kill a running timer or solver."""
     if not IS_WIN:
         return
-    subprocess.run(["taskkill", "/F", "/FI", "IMAGENAME eq %s" % APP_EXE,
-                    "/FI", "PID ne %d" % os.getpid()], creationflags=NO_WINDOW,
-                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+    import csv
+    result = subprocess.run(['tasklist', '/FI', 'IMAGENAME eq ' + APP_EXE,
+                             '/FO', 'CSV', '/NH'], creationflags=NO_WINDOW,
+                            capture_output=True, text=True, check=True)
+    for row in csv.reader(result.stdout.splitlines()):
+        if len(row) >= 2 and row[0].casefold() == APP_EXE.casefold() and int(row[1]) != os.getpid():
+            raise RuntimeError('Close Enigma Cube before changing its installation. Your work has not been interrupted.')
 
 
 def run_old_uninstaller(cmd):
@@ -384,6 +387,10 @@ def install_files(payload_path, install_dir, progress=None):
 
 
 def install(payload_path, install_dir, desktop_shortcut=True, progress=None, existing=None, close_running=True):
+    if getattr(sys, 'frozen', False):
+        from enigma_timer.hub_link import hub_executable
+        if hub_executable() is None:
+            raise RuntimeError('Install or update Enigma Hub (1.3.0 or newer) first: https://enigmastudioo.com')
     version, size = payload_info(payload_path)
     if existing and existing.get("inno_uninstall"):
         run_old_uninstaller(existing["inno_uninstall"])

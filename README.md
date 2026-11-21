@@ -1,6 +1,8 @@
-# Enigma Cube Timer 3.2.1
+# Enigma Cube Timer 3.3.0
 
 A speedcubing timer for Windows, built with Python and PyQt5. It works fully offline.
+
+Packaged Windows releases require **[Enigma Hub 1.3.0 or newer](https://github.com/d4rv1n17/Enigma-Hub/releases/latest)**. Install Hub first, then install Cube from its catalog. Your existing Cube shortcut opens Hub and launches Cube automatically. Installed apps work offline without an account; closing Hub never stops a running timer. Source development, diagnostics and uninstallation do not require Hub.
 
 Enigma Cube generates WCA-style scrambles and shows a preview of each one. It times solves like a Stackmat and tracks your averages and personal bests.
 
@@ -11,7 +13,7 @@ Enigma Cube generates WCA-style scrambles and shows a preview of each one. It ti
 - **Launch intro:** a 3.6-second animated logo on a cold start, with its caption in the selected interface language. It plays to completion; clicks and keys do not skip it. Disable it in **Settings → Interface**. Reduced motion uses a brief fade; restoring a window or opening the running app again does not replay the intro.
 - **Workspace controls:** **Ctrl+K** searches pages and tools; detached windows remember their size and position. Settings are grouped into Timer, Smart cube, Interface and Shortcuts tabs, with staged defaults and a reduced-motion option.
 - **Language:** English is the default, independent of the Windows language. Select Russian in **Settings → Interface**; the selection is saved for the next launch, including the launch intro.
-- **Updates:** packaged Windows builds check GitHub Releases in the background and download verified newer installers. **Settings → Interface → Updates** provides the automatic-update switch and a manual check. Restart and install when ready; active solves are not interrupted. Downloads require the release asset's SHA-256, and installation stages files with rollback. See [update notes](docs/UPDATES.md).
+- **Updates:** Enigma Hub checks releases and downloads verified installers. **Settings → Interface → Open Enigma Hub** opens product update management. Close Cube before updating; timers are never force-closed. Existing sessions, settings and training data are retained. See [update notes](docs/UPDATES.md).
 - **Giiker-style model:** rounded center caps and curved inner sticker corners, with the Enigma logo printed on the white center; small native window icons remain readable at title-bar sizes.
 - **Motion:** eased layer turns with a bounded queue, smooth zoom and camera reset, brief orbit inertia and a restrained solved-state accent. The white-center logo keeps its rotation. Pages crossfade, progress bars settle smoothly and notifications fade in and out; reduced motion disables these effects.
 
@@ -174,6 +176,12 @@ tests/                   unit tests (scrambles, stats, every algorithm, setup lo
 ```
 
 ## Changelog
+
+### 3.3.0: Enigma Hub ecosystem
+
+- Requires Enigma Hub 1.3.0+ for packaged interactive launches. Existing shortcuts open Hub and launch Cube automatically, including custom installation folders.
+- Hub owns verified downloads and updates. The settings button opens Hub; the packaged legacy updater and old pending packages are inactive.
+- Offline operation, existing sessions, training progress and preferences are preserved. Closing Hub does not interrupt solves. Installers ask you to close Cube instead of killing its process.
 
 ### 3.2.1: detect updates in existing app folders
 

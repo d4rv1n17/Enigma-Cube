@@ -4,6 +4,8 @@
 _LANG = ["en"]
 
 STRINGS = {
+    "hub_open": ("Open Enigma Hub", "Открыть Enigma Hub"),
+    "hub_updates": ("Enigma Hub manages installation and updates for all your Enigma apps.", "Установкой и обновлениями всех приложений Enigma управляет Enigma Hub."),
     "previous_scramble": ("Previous scramble (Shift+N)", "Предыдущий скрамбл (Shift+N)"),
     "updates_section": ("Updates", "Обновления"),
     "update_version": ("Installed version: %s", "Установленная версия: %s"),

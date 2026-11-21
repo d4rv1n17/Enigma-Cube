@@ -1868,7 +1868,10 @@ class MainWindow(QMainWindow):
         self._last_update_state=service.state
 
     def check_updates(self):
-        self.updater.check(manual=True)
+        try:
+            self.updater.check(manual=True)
+        except OSError as error:
+            QMessageBox.warning(self, "Enigma Hub", str(error))
 
     def _update_action(self):
         if self.updater.state=="ready":

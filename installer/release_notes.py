@@ -29,11 +29,11 @@ def main():
 **[EnigmaCube-Setup-%(v)s.exe](https://github.com/%(repo)s/releases/download/v%(v)s/EnigmaCube-Setup-%(v)s.exe)** \
 (Windows 10/11, 64-bit)
 
-1. Download the installer above and run it.
+1. Install **[Enigma Hub 1.3.0+](https://github.com/d4rv1n17/Enigma-Hub/releases/latest)** first. Install or update Cube from Hub's catalog (recommended), or run the installer above after Hub is installed.
 2. If Windows SmartScreen appears, click **More info → Run anyway** (the app is not code-signed).
 3. Choose the folder and shortcuts, then click **Install** (or **Update** if an older version is installed).
 
-Скачайте установщик выше, запустите его и нажмите «Установить». Если появится окно SmartScreen, \
+Сначала установите Enigma Hub 1.3.0+ и выберите Cube в его каталоге. Обычный запуск Cube теперь проходит через Hub; интернет и аккаунт не требуются. Если появится окно SmartScreen, \
 нажмите «Подробнее → Выполнить в любом случае».
 
 ## What's new in %(v)s

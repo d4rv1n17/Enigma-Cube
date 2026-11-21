@@ -84,7 +84,7 @@ class LanguageHistoryTests(unittest.TestCase):
                 main.state=IDLE
                 main.close()
 
-    def test_update_check_is_available_from_settings(self):
+    def test_settings_open_hub_instead_of_running_product_updater(self):
         with tempfile.TemporaryDirectory() as folder:
             store=Store(os.path.join(folder,'data.json'))
             store.settings['welcome_seen']=True
@@ -92,13 +92,14 @@ class LanguageHistoryTests(unittest.TestCase):
             try:
                 main.updater.fetch=lambda:None
                 dialog=SettingsDialog(main.settings,main)
-                self.assertTrue(dialog.cb_auto_update.isChecked())
+                self.assertTrue(dialog.cb_auto_update.isHidden())
                 self.assertTrue(dialog.check_update.isEnabled())
-                dialog.check_update.click()
-                main.updater._thread.join(2)
-                QTest.qWait(20)
-                self.assertEqual(main.updater.state,'current')
-                self.assertEqual(dialog.update_status.text(),main.updater.description())
+                with patch('enigma_timer.hub_link.open_hub') as launch:
+                    dialog.check_update.click()
+                    launch.assert_called_once_with('updates')
+                self.assertIsNone(main.updater._thread)
+                from enigma_timer.i18n import tr
+                self.assertEqual(dialog.update_status.text(),tr('hub_updates'))
                 self.assertTrue(dialog.apply_update.isHidden())
                 dialog.close()
             finally:main.close()

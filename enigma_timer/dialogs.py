@@ -7,7 +7,7 @@ from PyQt5.QtGui import QPixmap
 from PyQt5.QtWidgets import (QApplication, QButtonGroup, QCheckBox, QComboBox,
                              QDialog, QFormLayout, QFrame, QHBoxLayout, QLabel, QLineEdit,
                              QPlainTextEdit, QProgressBar, QPushButton, QScrollArea, QSlider,
-                             QVBoxLayout, QWidget, QTabWidget)
+                             QVBoxLayout, QWidget, QTabWidget, QMessageBox)
 
 from . import VERSION, theme
 from . import cube
@@ -301,15 +301,16 @@ class SettingsDialog(QDialog):
         self.cb_auto_update=QCheckBox(tr("update_automatic"))
         self.cb_auto_update.setChecked(bool(settings.get("auto_update",True)))
         self.cb_auto_update.setToolTip(tr("update_automatic_hint"))
+        self.cb_auto_update.hide()
         update_box.addWidget(self.cb_auto_update)
         self.update_status=QLabel()
         self.update_status.setObjectName("muted")
         self.update_status.setWordWrap(True)
         update_box.addWidget(self.update_status)
         update_row=QHBoxLayout()
-        self.check_update=QPushButton(tr("update_check"))
+        self.check_update=QPushButton(tr("hub_open"))
         self.check_update.setObjectName("seg")
-        self.check_update.clicked.connect(lambda:self.updater.check(manual=True) if self.updater else None)
+        self.check_update.clicked.connect(self._open_hub)
         update_row.addWidget(self.check_update)
         self.apply_update=QPushButton()
         self.apply_update.setObjectName("primary")
@@ -374,13 +375,20 @@ class SettingsDialog(QDialog):
 
     def _refresh_updates(self):
         service=self.updater
-        self.update_status.setText(service.description() if service else tr("update_idle"))
+        self.update_status.setText(tr("hub_updates"))
         self.check_update.setEnabled(bool(service) and not service.busy and service.state!="ready")
         actionable=bool(service) and service.state in ("available","ready")
         self.apply_update.setVisible(actionable)
         self.apply_update.setEnabled(actionable and service.can_install and not service.busy)
         self.apply_update.setText(tr("update_restart" if service and service.state=="ready" else "update_download"))
         self.apply_update.setToolTip("" if service and service.can_install else tr("update_desktop_only"))
+
+    def _open_hub(self):
+        from .hub_link import open_hub
+        try:
+            open_hub('updates')
+        except OSError as error:
+            QMessageBox.warning(self, "Enigma Hub", str(error))
 
     def _disconnect_updates(self,*_args):
         if self.updater:

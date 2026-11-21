@@ -249,6 +249,8 @@ class UpdateService(QObject):
             pass  # Window was closed while the daemon was returning a reply.
 
     def _restore(self):
+        if getattr(sys, 'frozen', False):
+            return  # Legacy downloaded updates are now managed by Hub.
         try:
             record=self.folder/"pending.json"
             if not record.is_file() or record.stat().st_size>8192:
@@ -271,13 +273,15 @@ class UpdateService(QObject):
 
     @property
     def can_install(self):
-        return sys.platform.startswith("win") and bool(getattr(sys,"frozen",False))
+        return False  # All product replacement belongs to Enigma Hub.
 
     @property
     def busy(self):
         return self._busy
 
     def automatic_check(self):
+        if getattr(sys, 'frozen', False):
+            return  # Hub owns background checks and verified downloads.
         if self.can_install and self.store.settings.get("auto_update",True) and self.state!="ready":
             now=time.time()
             try:
@@ -290,6 +294,11 @@ class UpdateService(QObject):
                 self.check()
 
     def check(self,manual=False):
+        if getattr(sys, 'frozen', False):
+            if manual:
+                from .hub_link import open_hub
+                open_hub('updates')
+            return
         if self._busy or self._closed or self.state=="ready":
             return
         self.manual=manual
