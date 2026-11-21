@@ -1,4 +1,4 @@
-# Enigma Cube Timer 3.3.0
+# Enigma Cube Timer 3.3.1
 
 A speedcubing timer for Windows, built with Python and PyQt5. It works fully offline.
 
@@ -176,6 +176,11 @@ tests/                   unit tests (scrambles, stats, every algorithm, setup lo
 ```
 
 ## Changelog
+
+### 3.3.1: recoverable setup errors
+
+- Quiet/windowed installers handle missing stderr without a secondary crash. The original installation failure is saved to `%APPDATA%/EnigmaTimer/setup-error.log` for Hub to display.
+- Install/update Hub with EnigmaHubSetup.exe first; an unregistered build-folder copy does not satisfy the installed-Hub requirement.
 
 ### 3.3.0: Enigma Hub ecosystem
 

@@ -26,6 +26,25 @@ except ImportError:  # run directly as a script: python installer/setup_app.py
 
 ACCENT = "#f4cc0c"
 
+
+def report_setup_error(error):
+    """Windowed PyInstaller builds have no stderr; errors must stay recoverable."""
+    message = 'install failed: %s\n' % error
+    stream = getattr(sys, 'stderr', None)
+    if stream is not None:
+        try:
+            stream.write(message)
+            stream.flush()
+        except Exception:
+            pass
+    try:
+        folder = core.data_dir()
+        os.makedirs(folder, exist_ok=True)
+        with open(os.path.join(folder, 'setup-error.log'), 'w', encoding='utf-8') as log:
+            log.write(message)
+    except (OSError, ValueError):
+        pass  # Reporting cannot turn a normal failed install into a second crash.
+
 T = {
     "setup": ("Setup", "Установка"),
     "window": ("Enigma Cube Setup", "Установка Enigma Cube"),
@@ -608,7 +627,7 @@ def main(argv=None):
                          existing={"dir":target} if updating else core.existing_install(target),
                          close_running=not updating)
         except Exception as e:  # noqa: BLE001 - reported through the exit code
-            sys.stderr.write("install failed: %s\n" % e)
+            report_setup_error(e)
             return 1
         return 0
 
